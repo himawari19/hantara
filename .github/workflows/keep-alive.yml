@@ -1,0 +1,37 @@
+# GitHub Actions - Supabase Keep-Alive
+# Backup strategy: pings your Supabase DB every 5 days
+# This ensures the database never sleeps even if Vercel Cron fails
+
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Run every 5 days at 00:00 UTC
+    - cron: "0 0 */5 * *"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Database
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/")
+          
+          echo "Response status: $response"
+          
+          if [ "$response" -ge 200 ] && [ "$response" -lt 400 ]; then
+            echo "✅ Supabase database is alive!"
+          else
+            echo "❌ Ping failed with status $response"
+            exit 1
+          fi
+
+      - name: Ping Keep-Alive Endpoint
+        if: ${{ secrets.APP_URL != '' }}
+        run: |
+          curl -s "${{ secrets.APP_URL }}/api/keep-alive"
+          echo "✅ App keep-alive endpoint pinged"
