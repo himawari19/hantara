@@ -7,20 +7,12 @@ export default function LandingPage() {
       <nav className="border-b border-[var(--border)] bg-[var(--bg-secondary)]">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <h1 className="text-xl font-bold text-[var(--accent)]">Hantara</h1>
-          <div className="flex items-center gap-4">
-            <Link
-              href="/login"
-              className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-            >
-              Login
-            </Link>
-            <Link
-              href="/register"
-              className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]"
-            >
-              Get Started Free
-            </Link>
-          </div>
+          <Link
+            href="/app"
+            className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--accent-hover)]"
+          >
+            Open App
+          </Link>
         </div>
       </nav>
 
@@ -35,23 +27,15 @@ export default function LandingPage() {
           <p className="mb-10 text-lg text-[var(--text-secondary)]">
             Open-source API client with collections, folders, environment variables, and real-time collaboration. Like Postman, but free and blazing fast.
           </p>
-          <div className="flex items-center justify-center gap-4">
-            <Link
-              href="/register"
-              className="rounded-lg bg-[var(--accent)] px-8 py-3 text-base font-bold text-white transition-colors hover:bg-[var(--accent-hover)]"
-            >
-              Start for Free
-            </Link>
-            <Link
-              href="/app"
-              className="rounded-lg border border-[var(--border)] px-8 py-3 text-base font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-secondary)]"
-            >
-              Try Without Account
-            </Link>
-          </div>
+          <Link
+            href="/app"
+            className="inline-block rounded-lg bg-[var(--accent)] px-8 py-3 text-base font-bold text-white transition-colors hover:bg-[var(--accent-hover)]"
+          >
+            Start Using — It&apos;s Free
+          </Link>
         </div>
 
-        {/* Preview Image Placeholder */}
+        {/* Preview */}
         <div className="mx-auto mt-16 max-w-4xl overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-2xl">
           <div className="flex items-center gap-2 border-b border-[var(--border)] px-4 py-3">
             <div className="h-3 w-3 rounded-full bg-red-500" />
@@ -69,108 +53,29 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Features Section */}
+      {/* Features */}
       <section className="border-t border-[var(--border)] bg-[var(--bg-secondary)] py-20">
         <div className="mx-auto max-w-6xl px-6">
           <h3 className="mb-12 text-center text-3xl font-bold text-[var(--text-primary)]">
             Everything you need to test APIs
           </h3>
           <div className="grid gap-8 md:grid-cols-3">
-            <FeatureCard
-              icon="📁"
-              title="Collections & Folders"
-              description="Organize requests into collections with nested folders. Drag, drop, and manage your API workspace effortlessly."
-            />
-            <FeatureCard
-              icon="⚡"
-              title="Blazing Fast"
-              description="Built with Next.js and Edge Functions. Requests are proxied through our edge network for zero CORS issues."
-            />
-            <FeatureCard
-              icon="🔐"
-              title="Environment Variables"
-              description="Define variables per environment and use {{variable}} syntax anywhere — URLs, headers, and body."
-            />
-            <FeatureCard
-              icon="👥"
-              title="Real-time Collaboration"
-              description="Share workspaces with your team. Role-based access control with owner, editor, and viewer permissions."
-            />
-            <FeatureCard
-              icon="🎨"
-              title="Beautiful Dark UI"
-              description="Designed for developers who spend hours testing APIs. Easy on the eyes with a modern dark interface."
-            />
-            <FeatureCard
-              icon="🆓"
-              title="Free & Open Source"
-              description="No limits, no paywalls. Deploy your own instance or use our hosted version. MIT licensed."
-            />
+            <FeatureCard icon="📁" title="Collections & Folders" description="Organize requests into collections with nested folders. Manage your API workspace effortlessly." />
+            <FeatureCard icon="⚡" title="Blazing Fast" description="Built with Next.js and Edge Functions. Requests are proxied through edge network for zero CORS issues." />
+            <FeatureCard icon="🔐" title="Environment Variables" description="Define variables per environment and use {{variable}} syntax anywhere — URLs, headers, and body." />
+            <FeatureCard icon="🎨" title="Beautiful Dark UI" description="Designed for developers who spend hours testing APIs. Easy on the eyes with a modern dark interface." />
+            <FeatureCard icon="📜" title="Request History" description="Every request is logged. Replay any previous request with one click." />
+            <FeatureCard icon="🆓" title="Free & Open Source" description="No limits, no paywalls. Deploy your own instance or use our hosted version." />
           </div>
-        </div>
-      </section>
-
-      {/* Methods Section */}
-      <section className="py-20">
-        <div className="mx-auto max-w-6xl px-6 text-center">
-          <h3 className="mb-8 text-3xl font-bold text-[var(--text-primary)]">
-            All HTTP methods supported
-          </h3>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {[
-              { method: "GET", color: "bg-green-900/30 text-green-400" },
-              { method: "POST", color: "bg-yellow-900/30 text-yellow-400" },
-              { method: "PUT", color: "bg-blue-900/30 text-blue-400" },
-              { method: "PATCH", color: "bg-purple-900/30 text-purple-400" },
-              { method: "DELETE", color: "bg-red-900/30 text-red-400" },
-              { method: "HEAD", color: "bg-gray-900/30 text-gray-400" },
-              { method: "OPTIONS", color: "bg-cyan-900/30 text-cyan-400" },
-            ].map(({ method, color }) => (
-              <span
-                key={method}
-                className={`rounded-lg px-5 py-2.5 text-sm font-bold ${color}`}
-              >
-                {method}
-              </span>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="border-t border-[var(--border)] bg-[var(--bg-secondary)] py-20">
-        <div className="mx-auto max-w-6xl px-6 text-center">
-          <h3 className="mb-4 text-3xl font-bold text-[var(--text-primary)]">
-            Ready to test your APIs?
-          </h3>
-          <p className="mb-8 text-[var(--text-secondary)]">
-            Join thousands of developers who switched to a faster, simpler API client.
-          </p>
-          <Link
-            href="/register"
-            className="inline-block rounded-lg bg-[var(--accent)] px-8 py-3 text-base font-bold text-white transition-colors hover:bg-[var(--accent-hover)]"
-          >
-            Get Started — It&apos;s Free
-          </Link>
         </div>
       </section>
 
       {/* Footer */}
       <footer className="border-t border-[var(--border)] py-8">
-        <div className="mx-auto max-w-6xl px-6">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-[var(--text-secondary)]">
-              © 2025 Hantara. Open source under MIT License.
-            </span>
-            <div className="flex items-center gap-4">
-              <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                GitHub
-              </a>
-              <a href="#" className="text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
-                Docs
-              </a>
-            </div>
-          </div>
+        <div className="mx-auto max-w-6xl px-6 text-center">
+          <span className="text-sm text-[var(--text-secondary)]">
+            © 2025 Hantara. Open source under MIT License.
+          </span>
         </div>
       </footer>
     </div>

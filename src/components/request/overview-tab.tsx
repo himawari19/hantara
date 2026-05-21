@@ -4,7 +4,7 @@ import { useRequestStore } from "@/store/request-store";
 import { useTabStore } from "@/store/tab-store";
 
 export function OverviewTab() {
-  const { method, url } = useRequestStore();
+  const { method, url, description, setDescription } = useRequestStore();
   const { tabs, activeTabId } = useTabStore();
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
@@ -33,9 +33,14 @@ export function OverviewTab() {
       {/* Description */}
       <div className="flex flex-col gap-2">
         <h3 className="text-sm font-bold text-[var(--text-primary)]">Description</h3>
+        <p className="text-xs text-[var(--text-secondary)]">
+          Add documentation for this request. Supports markdown formatting.
+        </p>
         <textarea
-          placeholder="Add a description for this request..."
-          className="min-h-[100px] resize-y rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Add a description for this request...&#10;&#10;## Example&#10;This endpoint returns a list of users."
+          className="min-h-[150px] resize-y rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-3 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none focus:ring-1 focus:ring-[var(--accent)]"
         />
       </div>
     </div>

@@ -1,7 +1,10 @@
 "use client";
 
 import { useTabStore, Tab } from "@/store/tab-store";
+import { useCollectionStore } from "@/store/collection-store";
+import { useRequestStore } from "@/store/request-store";
 import { useState } from "react";
+import { X, Plus } from "lucide-react";
 
 const methodColors: Record<string, string> = {
   GET: "text-green-400",
@@ -14,36 +17,90 @@ const methodColors: Record<string, string> = {
 };
 
 export function TabBar() {
-  const { tabs, activeTabId, setActiveTab, closeTab } = useTabStore();
+  const { tabs, activeTabId, setActiveTab, closeTab, closeAllTabs, closeOtherTabs } = useTabStore();
+  const { setActiveRequest } = useCollectionStore();
+  const { setMethod, setUrl, setHeaders, setBody, setBodyType } = useRequestStore();
+  const [contextMenu, setContextMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
 
-  if (tabs.length === 0) return null;
+  if (tabs.length === 0) {
+    return (
+      <div className="flex h-9 items-center border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3">
+        <span className="text-xs text-[var(--text-secondary)]">No open tabs</span>
+      </div>
+    );
+  }
+
+  const handleTabSelect = (tab: Tab) => {
+    setActiveTab(tab.id);
+    setActiveRequest(tab.requestId);
+    // Load request data - we'd need to find it from collection store
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    setContextMenu({ tabId, x: e.clientX, y: e.clientY });
+  };
 
   return (
-    <div className="flex items-center border-b border-[var(--border)] bg-[var(--bg-secondary)]">
-      <div className="flex flex-1 items-center overflow-x-auto">
-        {tabs.map((tab) => (
-          <TabItem
-            key={tab.id}
-            tab={tab}
-            isActive={tab.id === activeTabId}
-            onSelect={() => setActiveTab(tab.id)}
-            onClose={() => closeTab(tab.id)}
-          />
-        ))}
+    <>
+      <div className="flex items-center border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+        <div className="flex flex-1 items-center overflow-x-auto">
+          {tabs.map((tab) => (
+            <TabItem
+              key={tab.id}
+              tab={tab}
+              isActive={tab.id === activeTabId}
+              onSelect={() => handleTabSelect(tab)}
+              onClose={() => closeTab(tab.id)}
+              onContextMenu={(e) => handleContextMenu(e, tab.id)}
+            />
+          ))}
 
-        {/* New Tab Button */}
-        <button
-          type="button"
-          className="flex h-9 items-center px-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-          aria-label="New tab"
-          title="New tab"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
+          {/* New Tab Button */}
+          <button
+            type="button"
+            className="flex h-9 items-center px-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            aria-label="New tab"
+            title="New tab"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
       </div>
-    </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+          <div
+            className="fixed z-50 w-44 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              onClick={() => { closeTab(contextMenu.tabId); setContextMenu(null); }}
+              className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={() => { closeOtherTabs(contextMenu.tabId); setContextMenu(null); }}
+              className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            >
+              Close Others
+            </button>
+            <button
+              type="button"
+              onClick={() => { closeAllTabs(); setContextMenu(null); }}
+              className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            >
+              Close All
+            </button>
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -52,24 +109,35 @@ function TabItem({
   isActive,
   onSelect,
   onClose,
+  onContextMenu,
 }: {
   tab: Tab;
   isActive: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
-  const [showClose, setShowClose] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [editName, setEditName] = useState(tab.name);
+  const { updateTab } = useTabStore();
+
+  const handleRename = () => {
+    if (editName.trim() && editName !== tab.name) {
+      updateTab(tab.id, { name: editName.trim() });
+    }
+    setIsRenaming(false);
+  };
 
   return (
     <div
-      className={`group relative flex h-9 min-w-0 max-w-[180px] cursor-pointer items-center gap-1.5 border-r border-[var(--border)] px-3 text-sm ${
+      className={`group relative flex h-9 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 border-r border-[var(--border)] px-3 text-sm ${
         isActive
           ? "bg-[var(--bg-primary)] text-[var(--text-primary)]"
           : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
       }`}
       onClick={onSelect}
-      onMouseEnter={() => setShowClose(true)}
-      onMouseLeave={() => setShowClose(false)}
+      onContextMenu={onContextMenu}
+      onDoubleClick={(e) => { e.stopPropagation(); setIsRenaming(true); setEditName(tab.name); }}
     >
       {/* Active indicator */}
       {isActive && (
@@ -81,28 +149,41 @@ function TabItem({
         {tab.method}
       </span>
 
-      {/* Tab name */}
-      <span className="truncate text-xs">
-        {tab.isDirty && <span className="mr-0.5 text-[var(--accent)]">●</span>}
-        {tab.name}
-      </span>
+      {/* Tab name or rename input */}
+      {isRenaming ? (
+        <input
+          type="text"
+          value={editName}
+          onChange={(e) => setEditName(e.target.value)}
+          onBlur={handleRename}
+          onKeyDown={(e) => { if (e.key === "Enter") handleRename(); if (e.key === "Escape") setIsRenaming(false); }}
+          className="w-full min-w-[60px] rounded bg-[var(--bg-tertiary)] px-1 text-xs text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
+          autoFocus
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Rename tab"
+          title="Rename tab"
+        />
+      ) : (
+        <span className="truncate text-xs">
+          {tab.isDirty && <span className="mr-0.5 text-[var(--accent)]">●</span>}
+          {tab.name}
+        </span>
+      )}
 
       {/* Close button */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        className={`ml-auto shrink-0 rounded p-0.5 hover:bg-[var(--bg-tertiary)] ${
-          showClose || isActive ? "opacity-100" : "opacity-0"
-        }`}
-        aria-label={`Close ${tab.name}`}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 6L6 18M6 6l12 12" />
-        </svg>
-      </button>
+      {!isRenaming && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="ml-auto shrink-0 rounded p-0.5 opacity-0 hover:bg-[var(--bg-tertiary)] group-hover:opacity-100"
+          aria-label={`Close ${tab.name}`}
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 }

@@ -5,10 +5,22 @@ import { useCollectionStore, Collection, Folder, RequestItem } from "@/store/col
 import { useTabStore } from "@/store/tab-store";
 import { useRequestStore } from "@/store/request-store";
 import { AddRequestDialog } from "./add-request-dialog";
+import { ChevronRight, Folder as FolderIcon, FolderOpen, MoreVertical, Plus, Trash2, Copy, Download, Play, Pencil } from "lucide-react";
+import { CollectionRunner } from "./collection-runner";
+import { CollectionSettings } from "./collection-settings";
 
-export function CollectionTree() {
+interface CollectionTreeProps {
+  searchQuery?: string;
+}
+
+export function CollectionTree({ searchQuery = "" }: CollectionTreeProps) {
   const { collections, activeRequestId, setActiveRequest, addCollection } =
     useCollectionStore();
+
+  // Filter collections based on search
+  const filteredCollections = searchQuery.trim()
+    ? filterCollections(collections, searchQuery.toLowerCase())
+    : collections;
 
   return (
     <div className="flex flex-col gap-1">
@@ -18,14 +30,12 @@ export function CollectionTree() {
         onClick={() => addCollection("New Collection")}
         className="mb-2 flex items-center gap-2 rounded px-2 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
+        <Plus size={14} />
         New Collection
       </button>
 
       {/* Collection List */}
-      {collections.map((collection) => (
+      {filteredCollections.map((collection) => (
         <CollectionItem
           key={collection.id}
           collection={collection}
@@ -34,13 +44,63 @@ export function CollectionTree() {
         />
       ))}
 
-      {collections.length === 0 && (
+      {filteredCollections.length === 0 && !searchQuery && (
         <p className="px-2 py-4 text-center text-xs text-[var(--text-secondary)]">
           No collections yet. Create one to get started.
         </p>
       )}
+
+      {filteredCollections.length === 0 && searchQuery && (
+        <p className="px-2 py-4 text-center text-xs text-[var(--text-secondary)]">
+          No results for &quot;{searchQuery}&quot;
+        </p>
+      )}
     </div>
   );
+}
+
+function filterCollections(collections: Collection[], query: string): Collection[] {
+  return collections
+    .map((col) => {
+      const matchingRequests = col.requests.filter(
+        (r) => r.name.toLowerCase().includes(query) || r.url.toLowerCase().includes(query)
+      );
+      const matchingFolders = filterFolders(col.folders, query);
+      const collectionMatches = col.name.toLowerCase().includes(query);
+
+      if (collectionMatches || matchingRequests.length > 0 || matchingFolders.length > 0) {
+        return {
+          ...col,
+          isOpen: true,
+          requests: collectionMatches ? col.requests : matchingRequests,
+          folders: collectionMatches ? col.folders : matchingFolders,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean) as Collection[];
+}
+
+function filterFolders(folders: Folder[], query: string): Folder[] {
+  return folders
+    .map((folder) => {
+      const matchingRequests = folder.requests.filter(
+        (r) => r.name.toLowerCase().includes(query) || r.url.toLowerCase().includes(query)
+      );
+      const matchingSubFolders = filterFolders(folder.folders, query);
+      const folderMatches = folder.name.toLowerCase().includes(query);
+
+      if (folderMatches || matchingRequests.length > 0 || matchingSubFolders.length > 0) {
+        return {
+          ...folder,
+          isOpen: true,
+          requests: folderMatches ? folder.requests : matchingRequests,
+          folders: folderMatches ? folder.folders : matchingSubFolders,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean) as Folder[];
 }
 
 function CollectionItem({
@@ -52,18 +112,32 @@ function CollectionItem({
   activeRequestId: string | null;
   onSelectRequest: (id: string) => void;
 }) {
-  const { toggleCollection, renameCollection, removeCollection, addFolder, addRequest } =
+  const { toggleCollection, renameCollection, removeCollection, addFolder, addRequest, duplicateRequest } =
     useCollectionStore();
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(collection.name);
   const [showMenu, setShowMenu] = useState(false);
   const [showAddRequest, setShowAddRequest] = useState(false);
+  const [showRunner, setShowRunner] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const handleRename = () => {
     if (editName.trim()) {
       renameCollection(collection.id, editName.trim());
     }
     setIsEditing(false);
+  };
+
+  const handleExport = () => {
+    const data = JSON.stringify(collection, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${collection.name}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setShowMenu(false);
   };
 
   return (
@@ -76,8 +150,8 @@ function CollectionItem({
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               onBlur={handleRename}
-              onKeyDown={(e) => { if (e.key === "Enter") handleRename(); }}
-              className="w-full rounded bg-[var(--bg-tertiary)] px-1 text-sm text-[var(--text-primary)] outline-none"
+              onKeyDown={(e) => { if (e.key === "Enter") handleRename(); if (e.key === "Escape") setIsEditing(false); }}
+              className="w-full rounded bg-[var(--bg-tertiary)] px-2 py-0.5 text-sm text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
               autoFocus
               aria-label="Collection name"
             />
@@ -88,17 +162,15 @@ function CollectionItem({
             onClick={() => toggleCollection(collection.id)}
             className="flex flex-1 items-center gap-1.5 rounded px-2 py-1.5 text-sm font-medium text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            <ChevronRight
+              size={12}
               className={`transition-transform ${collection.isOpen ? "rotate-90" : ""}`}
-            >
-              <path d="M9 18l6-6-6-6" />
-            </svg>
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-            </svg>
+            />
+            {collection.isOpen ? <FolderOpen size={14} /> : <FolderIcon size={14} />}
             <span className="truncate">{collection.name}</span>
+            <span className="ml-auto text-[10px] text-[var(--text-secondary)]">
+              {countRequests(collection)}
+            </span>
           </button>
         )}
 
@@ -110,42 +182,65 @@ function CollectionItem({
             className="rounded p-1 text-[var(--text-secondary)] opacity-0 hover:bg-[var(--bg-tertiary)] group-hover:opacity-100"
             aria-label="Collection menu"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
-            </svg>
+            <MoreVertical size={14} />
           </button>
 
           {showMenu && (
-            <div className="absolute right-0 top-6 z-50 w-40 rounded border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg">
-              <button
-                type="button"
-                onClick={() => { setShowAddRequest(true); setShowMenu(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              >
-                Add Request
-              </button>
-              <button
-                type="button"
-                onClick={() => { addFolder(collection.id, null, "New Folder"); setShowMenu(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              >
-                Add Folder
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIsEditing(true); setShowMenu(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                onClick={() => { removeCollection(collection.id); setShowMenu(false); }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--error)] hover:bg-[var(--bg-tertiary)]"
-              >
-                Delete
-              </button>
-            </div>
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+              <div className="absolute right-0 top-6 z-50 w-44 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { setShowAddRequest(true); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <Plus size={12} /> Add Request
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { addFolder(collection.id, null, "New Folder"); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <FolderIcon size={12} /> Add Folder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setIsEditing(true); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <Download size={12} /> Export
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowSettings(true); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <Pencil size={12} /> Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowRunner(true); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <Play size={12} /> Run Collection
+                </button>
+                <div className="my-1 border-t border-[var(--border)]" />
+                <button
+                  type="button"
+                  onClick={() => { removeCollection(collection.id); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--error)] hover:bg-[var(--bg-tertiary)]"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -175,12 +270,19 @@ function CollectionItem({
         </div>
       )}
 
-      {/* Add Request Dialog */}
       {showAddRequest && (
         <AddRequestDialog
           onAdd={(data) => addRequest(collection.id, null, { name: data.name, method: data.method as any, url: data.url })}
           onClose={() => setShowAddRequest(false)}
         />
+      )}
+
+      {showRunner && (
+        <CollectionRunner collectionId={collection.id} onClose={() => setShowRunner(false)} />
+      )}
+
+      {showSettings && (
+        <CollectionSettings collectionId={collection.id} onClose={() => setShowSettings(false)} />
       )}
     </div>
   );
@@ -223,8 +325,8 @@ function FolderItem({
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               onBlur={handleRename}
-              onKeyDown={(e) => { if (e.key === "Enter") handleRename(); }}
-              className="w-full rounded bg-[var(--bg-tertiary)] px-1 text-sm text-[var(--text-primary)] outline-none"
+              onKeyDown={(e) => { if (e.key === "Enter") handleRename(); if (e.key === "Escape") setIsEditing(false); }}
+              className="w-full rounded bg-[var(--bg-tertiary)] px-1 text-sm text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
               autoFocus
               aria-label="Folder name"
             />
@@ -235,13 +337,11 @@ function FolderItem({
             onClick={() => toggleFolder(collectionId, folder.id)}
             className="flex flex-1 items-center gap-1.5 rounded px-2 py-1 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            <ChevronRight
+              size={10}
               className={`transition-transform ${folder.isOpen ? "rotate-90" : ""}`}
-            >
-              <path d="M9 18l6-6-6-6" />
-            </svg>
+            />
+            {folder.isOpen ? <FolderOpen size={12} /> : <FolderIcon size={12} />}
             <span className="truncate text-xs">{folder.name}</span>
           </button>
         )}
@@ -253,42 +353,44 @@ function FolderItem({
             className="rounded p-0.5 text-[var(--text-secondary)] opacity-0 hover:bg-[var(--bg-tertiary)] group-hover/folder:opacity-100"
             aria-label="Folder menu"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" />
-            </svg>
+            <MoreVertical size={12} />
           </button>
 
           {showMenu && (
-            <div className="absolute right-0 top-5 z-50 w-36 rounded border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg">
-              <button
-                type="button"
-                onClick={() => { setShowAddRequest(true); setShowMenu(false); }}
-                className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              >
-                Add Request
-              </button>
-              <button
-                type="button"
-                onClick={() => { addFolder(collectionId, folder.id, "Sub Folder"); setShowMenu(false); }}
-                className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              >
-                Add Sub Folder
-              </button>
-              <button
-                type="button"
-                onClick={() => { setIsEditing(true); setShowMenu(false); }}
-                className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-              >
-                Rename
-              </button>
-              <button
-                type="button"
-                onClick={() => { removeFolder(collectionId, folder.id); setShowMenu(false); }}
-                className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--error)] hover:bg-[var(--bg-tertiary)]"
-              >
-                Delete
-              </button>
-            </div>
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+              <div className="absolute right-0 top-5 z-50 w-40 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => { setShowAddRequest(true); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <Plus size={12} /> Add Request
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { addFolder(collectionId, folder.id, "Sub Folder"); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <FolderIcon size={12} /> Add Sub Folder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setIsEditing(true); setShowMenu(false); }}
+                  className="flex w-full px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  Rename
+                </button>
+                <div className="my-1 border-t border-[var(--border)]" />
+                <button
+                  type="button"
+                  onClick={() => { removeFolder(collectionId, folder.id); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--error)] hover:bg-[var(--bg-tertiary)]"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -317,7 +419,6 @@ function FolderItem({
         </div>
       )}
 
-      {/* Add Request Dialog */}
       {showAddRequest && (
         <AddRequestDialog
           onAdd={(data) => addRequest(collectionId, folder.id, { name: data.name, method: data.method as any, url: data.url })}
@@ -339,13 +440,15 @@ function RequestItemRow({
   onSelect: () => void;
   collectionName?: string;
 }) {
-  const { removeRequest } = useCollectionStore();
+  const { removeRequest, duplicateRequest, updateRequest } = useCollectionStore();
   const { openTab } = useTabStore();
   const { setMethod, setUrl, setHeaders, setBody, setBodyType } = useRequestStore();
+  const [showMenu, setShowMenu] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(request.name);
 
   const handleSelect = () => {
     onSelect();
-    // Open tab
     openTab({
       id: request.id,
       requestId: request.id,
@@ -353,7 +456,6 @@ function RequestItemRow({
       method: request.method,
       collectionName: collectionName || "Collection",
     });
-    // Load request data into request store
     setMethod(request.method);
     setUrl(request.url);
     setHeaders(request.headers);
@@ -361,30 +463,88 @@ function RequestItemRow({
     setBodyType(request.bodyType);
   };
 
+  const handleRename = () => {
+    if (editName.trim() && editName.trim() !== request.name) {
+      updateRequest(request.id, { name: editName.trim() });
+    }
+    setIsEditing(false);
+  };
+
   return (
     <div className="group/req flex items-center">
-      <button
-        type="button"
-        onClick={handleSelect}
-        className={`flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm ${
-          isActive
-            ? "bg-[var(--bg-tertiary)] text-[var(--text-primary)]"
-            : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
-        }`}
-      >
-        <MethodBadge method={request.method} />
-        <span className="truncate text-xs">{request.name || request.url || "Untitled"}</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => removeRequest(request.id)}
-        className="rounded p-0.5 text-[var(--text-secondary)] opacity-0 hover:text-[var(--error)] group-hover/req:opacity-100"
-        aria-label="Delete request"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 6L6 18M6 6l12 12" />
-        </svg>
-      </button>
+      {isEditing ? (
+        <div className="flex flex-1 items-center gap-2 px-2 py-1">
+          <MethodBadge method={request.method} />
+          <input
+            type="text"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleRename();
+              if (e.key === "Escape") { setEditName(request.name); setIsEditing(false); }
+            }}
+            className="flex-1 rounded bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-xs text-[var(--text-primary)] outline-none ring-1 ring-[var(--accent)]"
+            autoFocus
+            aria-label="Request name"
+          />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={handleSelect}
+          onDoubleClick={() => setIsEditing(true)}
+          className={`flex flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm ${
+            isActive
+              ? "bg-[var(--bg-tertiary)] text-[var(--text-primary)]"
+              : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+          }`}
+        >
+          <MethodBadge method={request.method} />
+          <span className="truncate text-xs">{request.name || request.url || "Untitled"}</span>
+        </button>
+      )}
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setShowMenu(!showMenu)}
+          className="rounded p-0.5 text-[var(--text-secondary)] opacity-0 hover:text-[var(--text-primary)] group-hover/req:opacity-100"
+          aria-label="Request menu"
+        >
+          <MoreVertical size={12} />
+        </button>
+
+        {showMenu && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+            <div className="absolute right-0 top-5 z-50 w-36 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg">
+              <button
+                type="button"
+                onClick={() => { setIsEditing(true); setShowMenu(false); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+              >
+                <Pencil size={12} /> Rename
+              </button>
+              <button
+                type="button"
+                onClick={() => { duplicateRequest(request.id); setShowMenu(false); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+              >
+                <Copy size={12} /> Duplicate
+              </button>
+              <div className="my-1 border-t border-[var(--border)]" />
+              <button
+                type="button"
+                onClick={() => { removeRequest(request.id); setShowMenu(false); }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--error)] hover:bg-[var(--bg-tertiary)]"
+              >
+                <Trash2 size={12} /> Delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -405,4 +565,16 @@ function MethodBadge({ method }: { method: string }) {
       {method}
     </span>
   );
+}
+
+function countRequests(collection: Collection): number {
+  let count = collection.requests.length;
+  function countInFolders(folders: Folder[]) {
+    folders.forEach((f) => {
+      count += f.requests.length;
+      countInFolders(f.folders);
+    });
+  }
+  countInFolders(collection.folders);
+  return count;
 }

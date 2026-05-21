@@ -7,8 +7,14 @@ export interface RequestItem {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
   url: string;
   headers: { key: string; value: string; enabled: boolean }[];
+  params: { key: string; value: string; enabled: boolean }[];
   body: string;
-  bodyType: "none" | "json" | "form-data" | "raw";
+  bodyType: "none" | "json" | "form-data" | "x-www-form-urlencoded" | "raw" | "binary" | "graphql";
+  requestType: "http" | "websocket" | "graphql";
+  preScript: string;
+  testScript: string;
+  authType: "none" | "bearer" | "basic" | "api-key" | "oauth2";
+  authConfig: Record<string, string>;
 }
 
 export interface Folder {
@@ -17,6 +23,8 @@ export interface Folder {
   requests: RequestItem[];
   folders: Folder[];
   isOpen: boolean;
+  auth?: { type: "none" | "bearer" | "basic" | "api-key" | "oauth2"; config: Record<string, string> };
+  variables?: { key: string; value: string; enabled: boolean }[];
 }
 
 export interface Collection {
@@ -25,6 +33,8 @@ export interface Collection {
   requests: RequestItem[];
   folders: Folder[];
   isOpen: boolean;
+  auth?: { type: "none" | "bearer" | "basic" | "api-key" | "oauth2"; config: Record<string, string> };
+  variables?: { key: string; value: string; enabled: boolean }[];
 }
 
 interface CollectionState {
@@ -50,10 +60,20 @@ interface CollectionState {
   updateRequest: (requestId: string, data: Partial<RequestItem>) => void;
   duplicateRequest: (requestId: string) => void;
   setActiveRequest: (id: string) => void;
+
+  // Collection-level settings
+  updateCollectionAuth: (collectionId: string, auth: Collection["auth"]) => void;
+  updateCollectionVariables: (collectionId: string, variables: Collection["variables"]) => void;
+  updateFolderAuth: (collectionId: string, folderId: string, auth: Folder["auth"]) => void;
+
+  // Drag & Drop / Move
+  moveRequest: (requestId: string, targetCollectionId: string, targetFolderId: string | null, targetIndex: number) => void;
+  moveFolder: (collectionId: string, folderId: string, targetParentFolderId: string | null, targetIndex: number) => void;
+  reorderRequests: (collectionId: string, folderId: string | null, requestIds: string[]) => void;
 }
 
 function generateId(): string {
-  return Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+  return crypto.randomUUID();
 }
 
 function createDefaultRequest(overrides?: Partial<RequestItem>): RequestItem {
@@ -63,8 +83,14 @@ function createDefaultRequest(overrides?: Partial<RequestItem>): RequestItem {
     method: "GET",
     url: "",
     headers: [{ key: "", value: "", enabled: true }],
+    params: [{ key: "", value: "", enabled: true }],
     body: "",
     bodyType: "none",
+    requestType: "http",
+    preScript: "",
+    testScript: "",
+    authType: "none",
+    authConfig: {},
     ...overrides,
   };
 }
@@ -141,6 +167,75 @@ function addSubfolder(folders: Folder[], parentId: string, newFolder: Folder): F
       return { ...f, folders: [...f.folders, newFolder] };
     }
     return { ...f, folders: addSubfolder(f.folders, parentId, newFolder) };
+  });
+}
+
+function updateFolderAuthById(folders: Folder[], folderId: string, auth: Folder["auth"]): Folder[] {
+  return folders.map((f) => {
+    if (f.id === folderId) return { ...f, auth };
+    return { ...f, folders: updateFolderAuthById(f.folders, folderId, auth) };
+  });
+}
+
+function removeRequestFromFoldersWithReturn(folders: Folder[], requestId: string): { folders: Folder[]; found: RequestItem | null } {
+  let found: RequestItem | null = null;
+  const newFolders = folders.map((folder) => {
+    const req = folder.requests.find((r) => r.id === requestId);
+    if (req) {
+      found = req;
+      return { ...folder, requests: folder.requests.filter((r) => r.id !== requestId) };
+    }
+    const result = removeRequestFromFoldersWithReturn(folder.folders, requestId);
+    if (result.found) found = result.found;
+    return { ...folder, folders: result.folders };
+  });
+  return { folders: newFolders, found };
+}
+
+function insertRequestInFolder(folders: Folder[], folderId: string, request: RequestItem, index: number): Folder[] {
+  return folders.map((f) => {
+    if (f.id === folderId) {
+      const newRequests = [...f.requests];
+      newRequests.splice(index, 0, request);
+      return { ...f, requests: newRequests };
+    }
+    return { ...f, folders: insertRequestInFolder(f.folders, folderId, request, index) };
+  });
+}
+
+function removeFolderWithReturn(folders: Folder[], folderId: string): { folders: Folder[]; found: Folder | null } {
+  let found: Folder | null = null;
+  const filtered = folders.filter((f) => {
+    if (f.id === folderId) { found = f; return false; }
+    return true;
+  });
+  if (found) return { folders: filtered, found };
+  const newFolders = filtered.map((f) => {
+    const result = removeFolderWithReturn(f.folders, folderId);
+    if (result.found) found = result.found;
+    return { ...f, folders: result.folders };
+  });
+  return { folders: newFolders, found };
+}
+
+function insertFolderInParent(folders: Folder[], parentId: string, folder: Folder, index: number): Folder[] {
+  return folders.map((f) => {
+    if (f.id === parentId) {
+      const newFolders = [...f.folders];
+      newFolders.splice(index, 0, folder);
+      return { ...f, folders: newFolders };
+    }
+    return { ...f, folders: insertFolderInParent(f.folders, parentId, folder, index) };
+  });
+}
+
+function reorderRequestsInFolder(folders: Folder[], folderId: string, requestIds: string[]): Folder[] {
+  return folders.map((f) => {
+    if (f.id === folderId) {
+      const reordered = requestIds.map((id) => f.requests.find((r) => r.id === id)).filter(Boolean) as RequestItem[];
+      return { ...f, requests: reordered };
+    }
+    return { ...f, folders: reorderRequestsInFolder(f.folders, folderId, requestIds) };
   });
 }
 
@@ -309,9 +404,137 @@ export const useCollectionStore = create<CollectionState>()(
         const request = findRequest(state.collections, id);
         set({ activeRequestId: id, activeRequest: request });
       },
+
+      // Collection-level settings
+      updateCollectionAuth: (collectionId, auth) => {
+        set((state) => ({
+          collections: state.collections.map((c) =>
+            c.id === collectionId ? { ...c, auth } : c
+          ),
+        }));
+      },
+
+      updateCollectionVariables: (collectionId, variables) => {
+        set((state) => ({
+          collections: state.collections.map((c) =>
+            c.id === collectionId ? { ...c, variables } : c
+          ),
+        }));
+      },
+
+      updateFolderAuth: (collectionId, folderId, auth) => {
+        set((state) => ({
+          collections: state.collections.map((c) => {
+            if (c.id !== collectionId) return c;
+            return { ...c, folders: updateFolderAuthById(c.folders, folderId, auth) };
+          }),
+        }));
+      },
+
+      // Drag & Drop
+      moveRequest: (requestId, targetCollectionId, targetFolderId, targetIndex) => {
+        set((state) => {
+          // First, remove the request from its current location
+          let movedRequest: RequestItem | null = null;
+          const collections = state.collections.map((c) => {
+            const reqInRoot = c.requests.find((r) => r.id === requestId);
+            if (reqInRoot) {
+              movedRequest = reqInRoot;
+              return { ...c, requests: c.requests.filter((r) => r.id !== requestId) };
+            }
+            const { folders, found } = removeRequestFromFoldersWithReturn(c.folders, requestId);
+            if (found) movedRequest = found;
+            return { ...c, folders };
+          });
+
+          if (!movedRequest) return { collections: state.collections };
+
+          // Then, add it to the target location
+          const finalCollections = collections.map((c) => {
+            if (c.id !== targetCollectionId) return c;
+            if (!targetFolderId) {
+              const newRequests = [...c.requests];
+              newRequests.splice(targetIndex, 0, movedRequest!);
+              return { ...c, requests: newRequests };
+            }
+            return { ...c, folders: insertRequestInFolder(c.folders, targetFolderId, movedRequest!, targetIndex) };
+          });
+
+          return { collections: finalCollections };
+        });
+      },
+
+      moveFolder: (collectionId, folderId, targetParentFolderId, targetIndex) => {
+        set((state) => ({
+          collections: state.collections.map((c) => {
+            if (c.id !== collectionId) return c;
+            // Remove folder from current position
+            let movedFolder: Folder | null = null;
+            const withoutFolder = removeFolderWithReturn(c.folders, folderId);
+            movedFolder = withoutFolder.found;
+            if (!movedFolder) return c;
+
+            // Insert at new position
+            if (!targetParentFolderId) {
+              const newFolders = [...withoutFolder.folders];
+              newFolders.splice(targetIndex, 0, movedFolder);
+              return { ...c, folders: newFolders };
+            }
+            return { ...c, folders: insertFolderInParent(withoutFolder.folders, targetParentFolderId, movedFolder, targetIndex) };
+          }),
+        }));
+      },
+
+      reorderRequests: (collectionId, folderId, requestIds) => {
+        set((state) => ({
+          collections: state.collections.map((c) => {
+            if (c.id !== collectionId) return c;
+            if (!folderId) {
+              const reordered = requestIds.map((id) => c.requests.find((r) => r.id === id)).filter(Boolean) as RequestItem[];
+              return { ...c, requests: reordered };
+            }
+            return { ...c, folders: reorderRequestsInFolder(c.folders, folderId, requestIds) };
+          }),
+        }));
+      },
     }),
     {
       name: "hantara-collections",
+      version: 2,
+      migrate: (persistedState: any, version: number) => {
+        if (version < 2) {
+          // Migrate old requests to include new fields
+          const state = persistedState as any;
+          if (state.collections) {
+            state.collections = state.collections.map((col: any) => ({
+              ...col,
+              requests: (col.requests || []).map(migrateRequest),
+              folders: (col.folders || []).map(migrateFolder),
+            }));
+          }
+        }
+        return persistedState;
+      },
     }
   )
 );
+
+function migrateRequest(req: any): any {
+  return {
+    ...req,
+    params: req.params || [{ key: "", value: "", enabled: true }],
+    requestType: req.requestType || "http",
+    preScript: req.preScript || "",
+    testScript: req.testScript || "",
+    authType: req.authType || "none",
+    authConfig: req.authConfig || {},
+  };
+}
+
+function migrateFolder(folder: any): any {
+  return {
+    ...folder,
+    requests: (folder.requests || []).map(migrateRequest),
+    folders: (folder.folders || []).map(migrateFolder),
+  };
+}

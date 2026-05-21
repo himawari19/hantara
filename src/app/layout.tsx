@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { AuthProvider } from "@/components/auth/auth-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,10 +12,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="antialiased">
-        <AuthProvider>{children}</AuthProvider>
-      </body>
+    <html lang="en" suppressHydrationWarning>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

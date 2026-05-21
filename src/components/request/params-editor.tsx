@@ -67,11 +67,46 @@ export function ParamsEditor() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-2 text-xs text-[var(--text-secondary)]">
-        <span className="w-6"></span>
-        <span>Key</span>
-        <span>Value</span>
-        <span className="w-6"></span>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between">
+        <div className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-2 text-xs text-[var(--text-secondary)]">
+          <span className="w-6"></span>
+          <span>Key</span>
+          <span>Value</span>
+          <span className="w-6"></span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              const newParams = params.map((p) => ({
+                ...p,
+                value: p.value ? encodeURIComponent(p.value) : p.value,
+              }));
+              setParams(newParams);
+              updateUrl(newParams);
+            }}
+            className="rounded px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            title="URL encode all values"
+          >
+            Encode
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const newParams = params.map((p) => ({
+                ...p,
+                value: p.value ? decodeURIComponent(p.value) : p.value,
+              }));
+              setParams(newParams);
+              updateUrl(newParams);
+            }}
+            className="rounded px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            title="URL decode all values"
+          >
+            Decode
+          </button>
+        </div>
       </div>
 
       {params.map((param, index) => (
