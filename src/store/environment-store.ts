@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface EnvironmentVariable {
   key: string;
@@ -299,6 +300,7 @@ export const useEnvironmentStore = create<EnvironmentState>()(
     }),
     {
       name: "hantara-environments",
+      storage: idbStorage,
     }
   )
 );

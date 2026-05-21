@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useRequestStore } from "@/store/request-store";
+import { useResponseStore } from "@/store/response-store";
 import { validateJsonSchema, generateSchemaFromSample } from "@/lib/schema-validator";
 import { Check, AlertTriangle, Wand2 } from "lucide-react";
 
 export function SchemaValidator() {
-  const { response } = useRequestStore();
+  const { response } = useResponseStore();
   const [schema, setSchema] = useState("");
   const [result, setResult] = useState<{ valid: boolean; errors: string[] } | null>(null);
 

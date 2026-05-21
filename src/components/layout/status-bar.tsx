@@ -2,24 +2,30 @@
 
 import { useEnvironmentStore } from "@/store/environment-store";
 import { useRequestStore } from "@/store/request-store";
+import { useResponseStore } from "@/store/response-store";
 import { useCookieStore } from "@/store/cookie-store";
 import { useThemeStore } from "@/store/theme-store";
 import { useSyncStore } from "@/store/sync-store";
-import { Globe, Cookie, Terminal, Keyboard, Sun, Moon, Cloud, CloudOff, RefreshCw, Check } from "lucide-react";
+import { usePresenceStore } from "@/store/presence-store";
+import { Globe, Cookie, Terminal, Keyboard, Sun, Moon, Cloud, CloudOff, RefreshCw, Check, Users, Wifi, WifiOff, Radio } from "lucide-react";
 
 interface StatusBarProps {
   onToggleConsole: () => void;
   showConsole: boolean;
+  onShowSyncHealth?: () => void;
 }
 
-export function StatusBar({ onToggleConsole, showConsole }: StatusBarProps) {
+export function StatusBar({ onToggleConsole, showConsole, onShowSyncHealth }: StatusBarProps) {
   const { environments, activeEnvironmentId } = useEnvironmentStore();
-  const { isLoading, response, consoleLogs } = useRequestStore();
+  const { consoleLogs } = useRequestStore();
+  const { isLoading, response } = useResponseStore();
   const { cookies } = useCookieStore();
   const { theme, toggleTheme } = useThemeStore();
-  const { status: syncStatus, lastSyncedAt, error: syncError } = useSyncStore();
+  const { status: syncStatus, lastSyncedAt, error: syncError, realtimeStatus, offlineQueue, isLeaderTab } = useSyncStore();
+  const { users, localUserId } = usePresenceStore();
 
   const activeEnv = environments.find((e) => e.id === activeEnvironmentId);
+  const otherUsers = users.filter((u) => u.id !== localUserId);
 
   const syncLabel = syncStatus === "syncing" ? "Syncing..." 
     : syncStatus === "synced" ? "Synced" 
@@ -29,6 +35,16 @@ export function StatusBar({ onToggleConsole, showConsole }: StatusBarProps) {
   const syncColor = syncStatus === "syncing" ? "text-[var(--accent)]"
     : syncStatus === "synced" ? "text-[var(--success)]"
     : syncStatus === "error" ? "text-[var(--error)]"
+    : "text-[var(--text-secondary)]";
+
+  const realtimeLabel = realtimeStatus === "connected" ? "Live"
+    : realtimeStatus === "connecting" ? "Connecting..."
+    : realtimeStatus === "reconnecting" ? "Reconnecting..."
+    : "Offline";
+
+  const realtimeColor = realtimeStatus === "connected" ? "text-[var(--success)]"
+    : realtimeStatus === "reconnecting" ? "text-[var(--warning)]"
+    : realtimeStatus === "connecting" ? "text-[var(--accent)]"
     : "text-[var(--text-secondary)]";
 
   return (
@@ -79,6 +95,36 @@ export function StatusBar({ onToggleConsole, showConsole }: StatusBarProps) {
           {syncStatus === "idle" && <Cloud size={10} />}
           <span>{syncLabel}</span>
         </div>
+
+        {/* Realtime connection indicator */}
+        <button
+          type="button"
+          onClick={onShowSyncHealth}
+          className={`flex items-center gap-1 ${realtimeColor} hover:opacity-80`}
+          title={`Realtime: ${realtimeLabel}${!isLeaderTab ? " (follower)" : ""} — Click for details`}
+        >
+          {realtimeStatus === "connected" && <Wifi size={10} />}
+          {realtimeStatus === "reconnecting" && <Radio size={10} className="animate-pulse" />}
+          {realtimeStatus === "connecting" && <Radio size={10} className="animate-pulse" />}
+          {realtimeStatus === "disconnected" && <WifiOff size={10} />}
+          <span>{realtimeLabel}</span>
+        </button>
+
+        {/* Offline queue indicator */}
+        {offlineQueue.length > 0 && (
+          <div className="flex items-center gap-1 text-[var(--warning)]" title={`${offlineQueue.length} changes queued offline`}>
+            <CloudOff size={10} />
+            <span>{offlineQueue.length} queued</span>
+          </div>
+        )}
+
+        {/* Online users */}
+        {otherUsers.length > 0 && (
+          <div className="flex items-center gap-1 text-[var(--text-secondary)]" title={`${otherUsers.length} collaborator${otherUsers.length > 1 ? "s" : ""} online`}>
+            <Users size={10} />
+            <span>{otherUsers.length + 1} online</span>
+          </div>
+        )}
       </div>
 
       {/* Right */}

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 /**
  * Pin Store - Pin favorite requests to the top of sidebar
@@ -43,6 +44,6 @@ export const usePinStore = create<PinState>()(
         }
       },
     }),
-    { name: "hantara-pins" }
+    { name: "hantara-pins", storage: idbStorage }
   )
 );

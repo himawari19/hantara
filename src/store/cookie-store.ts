@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface Cookie {
   name: string;
@@ -113,6 +114,6 @@ export const useCookieStore = create<CookieState>()(
         }
       },
     }),
-    { name: "hantara-cookies" }
+    { name: "hantara-cookies", storage: idbStorage }
   )
 );

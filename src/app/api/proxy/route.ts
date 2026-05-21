@@ -64,9 +64,13 @@ export async function POST(request: NextRequest) {
     const endTime = Date.now();
 
     // Read response as buffer first for accurate size
+    // Cap at 25MB to prevent browser memory issues
+    const MAX_RESPONSE_SIZE = 25 * 1024 * 1024;
     const responseBuffer = await response.arrayBuffer();
-    const responseText = new TextDecoder("utf-8").decode(responseBuffer);
-    let responseBody: any = responseText;
+    const isTruncated = responseBuffer.byteLength > MAX_RESPONSE_SIZE;
+    const safeBuffer = isTruncated ? responseBuffer.slice(0, MAX_RESPONSE_SIZE) : responseBuffer;
+    const responseText = new TextDecoder("utf-8").decode(safeBuffer);
+    let responseBody: any = isTruncated ? responseText + "\n\n[... Response truncated at 25MB]" : responseText;
 
     // Try to parse as JSON
     try {

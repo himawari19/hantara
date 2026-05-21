@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface Tab {
   id: string;
@@ -92,6 +93,7 @@ export const useTabStore = create<TabState>()(
     }),
     {
       name: "hantara-tabs",
+      storage: idbStorage,
     }
   )
 );

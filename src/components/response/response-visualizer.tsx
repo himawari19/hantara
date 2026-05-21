@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useRequestStore } from "@/store/request-store";
+import { useResponseStore } from "@/store/response-store";
 import { Table, BarChart3, List } from "lucide-react";
 
 type ViewMode = "table" | "chart" | "list";
 
 export function ResponseVisualizer() {
-  const { response } = useRequestStore();
+  const { response } = useResponseStore();
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [selectedPath, setSelectedPath] = useState("");
 

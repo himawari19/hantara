@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface ChainVariable {
   key: string;
@@ -113,7 +114,7 @@ export const useChainStore = create<ChainState>()(
         return result;
       },
     }),
-    { name: "hantara-chain" }
+    { name: "hantara-chain", storage: idbStorage }
   )
 );
 

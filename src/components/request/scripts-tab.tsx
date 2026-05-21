@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRequestStore } from "@/store/request-store";
-import { ChevronRight, Zap } from "lucide-react";
+import { ChevronRight, Zap, Wand2 } from "lucide-react";
+import { VisualTestBuilder } from "./visual-test-builder";
 import dynamic from "next/dynamic";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react").then((m) => m.default), {
@@ -49,6 +50,7 @@ export function ScriptsTab({ type }: ScriptsTabProps) {
   const { preScript, testScript, setPreScript, setTestScript, scriptLogs, testResults, clearScriptLogs } =
     useRequestStore();
   const [showSnippets, setShowSnippets] = useState(true);
+  const [showTestBuilder, setShowTestBuilder] = useState(false);
 
   const isPreRequest = type === "pre-request";
   const script = isPreRequest ? preScript : testScript;
@@ -69,14 +71,26 @@ export function ScriptsTab({ type }: ScriptsTabProps) {
             ? "Runs before the request is sent. Use pm.variables.set(), pm.environment.set(), etc."
             : "Runs after the response is received. Use pm.test(), pm.expect(), pm.response.json(), etc."}
         </span>
-        <button
-          type="button"
-          onClick={() => setShowSnippets(!showSnippets)}
-          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
-        >
-          <Zap size={11} />
-          {showSnippets ? "Hide Snippets" : "Show Snippets"}
-        </button>
+        <div className="flex items-center gap-1">
+          {!isPreRequest && (
+            <button
+              type="button"
+              onClick={() => setShowTestBuilder(true)}
+              className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+            >
+              <Wand2 size={11} />
+              Visual Builder
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowSnippets(!showSnippets)}
+            className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-[var(--accent)] hover:bg-[var(--bg-tertiary)]"
+          >
+            <Zap size={11} />
+            {showSnippets ? "Hide Snippets" : "Show Snippets"}
+          </button>
+        </div>
       </div>
 
       {/* Editor + Snippets side by side */}
@@ -177,6 +191,14 @@ export function ScriptsTab({ type }: ScriptsTabProps) {
             </div>
           )}
         </div>
+      )}
+
+      {/* Visual Test Builder Modal */}
+      {showTestBuilder && (
+        <VisualTestBuilder
+          onInsert={insertSnippet}
+          onClose={() => setShowTestBuilder(false)}
+        />
       )}
     </div>
   );

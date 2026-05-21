@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useEnvironmentStore } from "@/store/environment-store";
+import { VariablePopover } from "../environment/variable-popover";
 
 interface UrlBarProps {
   value: string;
@@ -12,14 +13,21 @@ interface UrlBarProps {
 export function UrlBar({ value, onChange, placeholder }: UrlBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const [popover, setPopover] = useState<{ name: string; x: number; y: number } | null>(null);
   const { getResolvedVariables } = useEnvironmentStore();
 
   const resolvedVars = getResolvedVariables();
 
+  const handleVariableClick = (e: React.MouseEvent, varName: string) => {
+    e.stopPropagation();
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    setPopover({ name: varName, x: rect.left, y: rect.bottom });
+  };
+
   // Parse URL to find {{variable}} patterns and highlight them
   const renderHighlightedUrl = () => {
     if (!value) return null;
-    const parts: { text: string; isVar: boolean; resolved: boolean }[] = [];
+    const parts: { text: string; isVar: boolean; resolved: boolean; varName?: string }[] = [];
     const regex = /\{\{\s*([^}]+?)\s*\}\}/g;
     let lastIndex = 0;
     let match;
@@ -30,7 +38,7 @@ export function UrlBar({ value, onChange, placeholder }: UrlBarProps) {
       }
       const varName = match[1].trim();
       const isResolved = varName in resolvedVars;
-      parts.push({ text: match[0], isVar: true, resolved: isResolved });
+      parts.push({ text: match[0], isVar: true, resolved: isResolved, varName });
       lastIndex = regex.lastIndex;
     }
 
@@ -46,10 +54,12 @@ export function UrlBar({ value, onChange, placeholder }: UrlBarProps) {
             className={
               part.isVar
                 ? part.resolved
-                  ? "rounded bg-green-500/15 px-0.5 text-green-400 font-medium"
-                  : "rounded bg-red-500/15 px-0.5 text-red-400 font-medium"
+                  ? "pointer-events-auto cursor-pointer rounded bg-green-500/15 px-0.5 text-green-400 font-medium hover:bg-green-500/25"
+                  : "pointer-events-auto cursor-pointer rounded bg-red-500/15 px-0.5 text-red-400 font-medium hover:bg-red-500/25"
                 : "text-transparent"
             }
+            onClick={part.isVar ? (e) => handleVariableClick(e, part.varName!) : undefined}
+            title={part.isVar ? `Click to edit {{${part.varName}}}` : undefined}
           >
             {part.text}
           </span>
@@ -76,6 +86,15 @@ export function UrlBar({ value, onChange, placeholder }: UrlBarProps) {
         } placeholder-[var(--text-secondary)]`}
         aria-label="Request URL"
       />
+
+      {/* Variable Quick-Edit Popover */}
+      {popover && (
+        <VariablePopover
+          variableName={popover.name}
+          position={{ x: popover.x, y: popover.y }}
+          onClose={() => setPopover(null)}
+        />
+      )}
     </div>
   );
 }

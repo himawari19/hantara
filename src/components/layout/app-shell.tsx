@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { Sidebar } from "./sidebar";
 import { TabBar } from "./tab-bar";
 import { RequestHeader } from "./request-header";
@@ -8,19 +8,30 @@ import { RequestPanel } from "../request/request-panel";
 import { ResponsePanel } from "../response/response-panel";
 import { ResizablePanel } from "./resizable-panel";
 import { StatusBar } from "./status-bar";
-import { ConsolePanel } from "../console/console-panel";
-import { ShortcutsPanel } from "../shortcuts/shortcuts-panel";
-import { CodeGeneratorDialog } from "../code-generator/code-generator-dialog";
-import { SearchDialog } from "../search/search-dialog";
-import { CookieManager } from "../cookies/cookie-manager";
-import { MockServerPanel } from "../mock/mock-server-panel";
-import { LoadTestPanel } from "../performance/load-test-panel";
-import { MonitorPanel } from "../monitor/monitor-panel";
-import { DocsGenerator } from "../docs/docs-generator";
+import { OfflineBanner } from "./offline-banner";
+import { ToastContainer } from "../toast/toast-container";
 import { useShortcutsStore } from "@/store/shortcuts-store";
 import { useRequestStore } from "@/store/request-store";
 import { useThemeStore } from "@/store/theme-store";
 import { useTabStore } from "@/store/tab-store";
+
+// Lazy load heavy panels & modals — only loaded when user opens them
+const ConsolePanel = lazy(() => import("../console/console-panel").then(m => ({ default: m.ConsolePanel })));
+const ShortcutsPanel = lazy(() => import("../shortcuts/shortcuts-panel").then(m => ({ default: m.ShortcutsPanel })));
+const CodeGeneratorDialog = lazy(() => import("../code-generator/code-generator-dialog").then(m => ({ default: m.CodeGeneratorDialog })));
+const SearchDialog = lazy(() => import("../search/search-dialog").then(m => ({ default: m.SearchDialog })));
+const CookieManager = lazy(() => import("../cookies/cookie-manager").then(m => ({ default: m.CookieManager })));
+const MockServerPanel = lazy(() => import("../mock/mock-server-panel").then(m => ({ default: m.MockServerPanel })));
+const LoadTestPanel = lazy(() => import("../performance/load-test-panel").then(m => ({ default: m.LoadTestPanel })));
+const MonitorPanel = lazy(() => import("../monitor/monitor-panel").then(m => ({ default: m.MonitorPanel })));
+const DocsGenerator = lazy(() => import("../docs/docs-generator").then(m => ({ default: m.DocsGenerator })));
+const VersionHistory = lazy(() => import("../request/version-history").then(m => ({ default: m.VersionHistory })));
+const SyncHealthPanel = lazy(() => import("../sync/sync-health-panel").then(m => ({ default: m.SyncHealthPanel })));
+
+import { PresenceProvider } from "../providers/presence-provider";
+import { PresenceIndicators } from "./presence-indicators";
+import { useVersionStore } from "@/store/version-store";
+import { useCollectionStore } from "@/store/collection-store";
 
 type MainView = "request" | "mock-server" | "load-test" | "monitor";
 
@@ -30,12 +41,16 @@ export function AppShell() {
   const [showSearch, setShowSearch] = useState(false);
   const [showCookies, setShowCookies] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showSyncHealth, setShowSyncHealth] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mainView, setMainView] = useState<MainView>("request");
   const { showPanel: showShortcuts, togglePanel: toggleShortcuts } = useShortcutsStore();
-  const { sendRequest } = useRequestStore();
+  const { sendRequest, method, url, headers, body, bodyType } = useRequestStore();
   const { theme } = useThemeStore();
   const { tabs } = useTabStore();
+  const { saveSnapshot } = useVersionStore();
+  const { activeRequestId } = useCollectionStore();
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -44,7 +59,14 @@ export function AppShell() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); sendRequest(); }
+      if (e.ctrlKey && e.key === "Enter") {
+        e.preventDefault();
+        // Auto-save version snapshot before sending
+        if (activeRequestId) {
+          saveSnapshot(activeRequestId, { requestId: activeRequestId, name: "Auto-save", method, url, headers, body, bodyType, authType: "none", authConfig: {} });
+        }
+        sendRequest();
+      }
       if (e.ctrlKey && e.key === "k") { e.preventDefault(); setShowSearch(true); }
       if (e.ctrlKey && e.key === "b") { e.preventDefault(); setSidebarCollapsed((prev) => !prev); }
       if (e.ctrlKey && e.key === "`") { e.preventDefault(); setShowConsole((prev) => !prev); }
@@ -59,6 +81,9 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden">
+      {/* Offline / Reconnecting Banner */}
+      <OfflineBanner />
+
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <Sidebar
@@ -124,7 +149,9 @@ export function AppShell() {
                 <h2 className="text-sm font-bold text-[var(--text-primary)]">Mock Servers</h2>
               </div>
               <div className="flex-1 overflow-hidden">
-                <MockServerPanel />
+                <Suspense fallback={<PanelLoader />}>
+                  <MockServerPanel />
+                </Suspense>
               </div>
             </div>
           )}
@@ -135,7 +162,9 @@ export function AppShell() {
                 <h2 className="text-sm font-bold text-[var(--text-primary)]">Load Testing</h2>
               </div>
               <div className="flex-1 overflow-hidden">
-                <LoadTestPanel />
+                <Suspense fallback={<PanelLoader />}>
+                  <LoadTestPanel />
+                </Suspense>
               </div>
             </div>
           )}
@@ -146,25 +175,50 @@ export function AppShell() {
                 <h2 className="text-sm font-bold text-[var(--text-primary)]">API Monitoring</h2>
               </div>
               <div className="flex-1 overflow-hidden">
-                <MonitorPanel />
+                <Suspense fallback={<PanelLoader />}>
+                  <MonitorPanel />
+                </Suspense>
               </div>
             </div>
           )}
 
           {/* Console Panel */}
-          {showConsole && <ConsolePanel onClose={() => setShowConsole(false)} />}
+          {showConsole && (
+            <Suspense fallback={<PanelLoader />}>
+              <ConsolePanel onClose={() => setShowConsole(false)} />
+            </Suspense>
+          )}
         </div>
       </div>
 
       {/* Status Bar */}
-      <StatusBar onToggleConsole={() => setShowConsole(!showConsole)} showConsole={showConsole} />
+      <StatusBar
+        onToggleConsole={() => setShowConsole(!showConsole)}
+        showConsole={showConsole}
+        onShowSyncHealth={() => setShowSyncHealth(true)}
+      />
 
       {/* Modals */}
-      {showShortcuts && <ShortcutsPanel />}
-      {showCodeGen && <CodeGeneratorDialog onClose={() => setShowCodeGen(false)} />}
-      {showSearch && <SearchDialog onClose={() => setShowSearch(false)} />}
-      {showCookies && <CookieManager onClose={() => setShowCookies(false)} />}
-      {showDocs && <DocsGenerator onClose={() => setShowDocs(false)} />}
+      <Suspense fallback={null}>
+        {showShortcuts && <ShortcutsPanel />}
+        {showCodeGen && <CodeGeneratorDialog onClose={() => setShowCodeGen(false)} />}
+        {showSearch && <SearchDialog onClose={() => setShowSearch(false)} />}
+        {showCookies && <CookieManager onClose={() => setShowCookies(false)} />}
+        {showDocs && <DocsGenerator onClose={() => setShowDocs(false)} />}
+        {showVersionHistory && <VersionHistory onClose={() => setShowVersionHistory(false)} />}
+        {showSyncHealth && <SyncHealthPanel onClose={() => setShowSyncHealth(false)} />}
+      </Suspense>
+
+      {/* Toast Notifications */}
+      <ToastContainer />
+    </div>
+  );
+}
+
+function PanelLoader() {
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--text-secondary)]">
+      Loading...
     </div>
   );
 }

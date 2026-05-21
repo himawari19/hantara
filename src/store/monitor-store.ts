@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface MonitorCheck {
   id: string;
@@ -97,6 +98,6 @@ export const useMonitorStore = create<MonitorState>()(
         }));
       },
     }),
-    { name: "hantara-monitors" }
+    { name: "hantara-monitors", storage: idbStorage }
   )
 );

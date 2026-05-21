@@ -1,12 +1,14 @@
 "use client";
 
-import { useRequestStore } from "@/store/request-store";
+import { useResponseStore } from "@/store/response-store";
 import { HistoryPanel } from "../history/history-panel";
 import { ResponseDiff } from "./response-diff";
 import { useState } from "react";
 import { Copy, Check, Download, Search, ArrowLeftRight } from "lucide-react";
 import dynamic from "next/dynamic";
 import { ResponseVisualizer } from "./response-visualizer";
+import { ResponseExamples } from "./response-examples";
+import { OpenAPIValidator } from "./openapi-validator";
 
 const MonacoEditor = dynamic(
   () => import("@monaco-editor/react").then((m) => m.default).catch(() => {
@@ -29,11 +31,11 @@ const MonacoEditor = dynamic(
   }
 );
 
-type ResponseTab = "body" | "headers" | "cookies" | "test-results" | "visualize" | "history";
+type ResponseTab = "body" | "headers" | "cookies" | "test-results" | "visualize" | "examples" | "schema" | "history";
 type BodyView = "pretty" | "raw" | "preview";
 
 export function ResponsePanel() {
-  const { response, isLoading, error, testResults } = useRequestStore();
+  const { response, isLoading, error, testResults } = useResponseStore();
   const [activeTab, setActiveTab] = useState<ResponseTab>("body");
   const [bodyView, setBodyView] = useState<BodyView>("pretty");
   const [copied, setCopied] = useState(false);
@@ -350,6 +352,14 @@ export function ResponsePanel() {
         )}
 
         {activeTab === "visualize" && <ResponseVisualizer />}
+
+        {activeTab === "examples" && (
+          <div className="p-3">
+            <ResponseExamples />
+          </div>
+        )}
+
+        {activeTab === "schema" && <OpenAPIValidator />}
       </div>
 
       {/* Diff Modal */}
@@ -427,6 +437,28 @@ function ResponseTabs({
         }`}
       >
         Visualize
+      </button>
+      <button
+        type="button"
+        onClick={() => setActiveTab("examples")}
+        className={`px-4 py-2 text-sm ${
+          activeTab === "examples"
+            ? "border-b-2 border-[var(--accent)] text-[var(--text-primary)] font-medium"
+            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        }`}
+      >
+        Examples
+      </button>
+      <button
+        type="button"
+        onClick={() => setActiveTab("schema")}
+        className={`px-4 py-2 text-sm ${
+          activeTab === "schema"
+            ? "border-b-2 border-[var(--accent)] text-[var(--text-primary)] font-medium"
+            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+        }`}
+      >
+        Schema
       </button>
       <button
         type="button"

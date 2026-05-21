@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useCollectionStore } from "@/store/collection-store";
-import { useRequestStore, ResponseData } from "@/store/request-store";
+import { useResponseStore, ResponseData } from "@/store/response-store";
 import { Save, Trash2, Eye } from "lucide-react";
 
 export interface SavedExample {
@@ -27,7 +27,7 @@ function saveExamples(requestId: string, examples: SavedExample[]) {
 }
 
 export function ResponseExamples() {
-  const { response } = useRequestStore();
+  const { response } = useResponseStore();
   const { activeRequestId } = useCollectionStore();
   const [examples, setExamples] = useState<SavedExample[]>(() =>
     activeRequestId ? getExamples(activeRequestId) : []

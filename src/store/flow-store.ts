@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 import { useEnvironmentStore } from "./environment-store";
 import { useCookieStore } from "./cookie-store";
 import { runScript, ScriptContext } from "@/lib/script-runner";
@@ -289,6 +290,7 @@ export const useFlowStore = create<FlowState>()(
     }),
     {
       name: "hantara-flows",
+      storage: idbStorage,
     }
   )
 );

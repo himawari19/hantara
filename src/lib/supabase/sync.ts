@@ -17,6 +17,8 @@ import { useMockStore } from "@/store/mock-store";
 import { useCookieStore } from "@/store/cookie-store";
 import { useRequestStore } from "@/store/request-store";
 import { useSyncStore } from "@/store/sync-store";
+import { useToastStore } from "@/store/toast-store";
+import { useSyncHealthStore } from "@/store/sync-health-store";
 
 const DEFAULT_WORKSPACE_ID = "00000000-0000-0000-0000-000000000001";
 const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000000";
@@ -93,7 +95,7 @@ async function ensureDefaultWorkspace() {
     .from("workspaces")
     .select("id")
     .eq("id", DEFAULT_WORKSPACE_ID)
-    .single();
+    .maybeSingle();
 
   if (data) {
     workspaceReady = true;
@@ -141,7 +143,7 @@ async function resolveConflict(table: string, id: string, localUpdatedAt: string
     .from(table)
     .select("updated_at")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (!data || !data.updated_at) return "local";
 
@@ -152,7 +154,7 @@ async function resolveConflict(table: string, id: string, localUpdatedAt: string
 }
 
 // ============================================
-// SYNC COLLECTIONS TO SUPABASE
+// SYNC COLLECTIONS TO SUPABASE (BATCH UPSERT)
 // ============================================
 
 export async function syncCollectionsToSupabase() {
@@ -166,35 +168,53 @@ export async function syncCollectionsToSupabase() {
   }
 
   const { collections } = useCollectionStore.getState();
-  console.log("[Sync] Syncing", collections.length, "collections...");
+  console.log("[Sync] Batch syncing", collections.length, "collections...");
 
-  for (const collection of collections) {
-    const { data: existingCol } = await supabase
-      .from("collections")
-      .select("id")
-      .eq("id", collection.id)
-      .single();
+  const now = new Date().toISOString();
 
-    if (existingCol) {
-      const { error } = await supabase
-        .from("collections")
-        .update({ name: collection.name, updated_at: new Date().toISOString() })
-        .eq("id", collection.id);
-      if (error) console.error("[Sync] Collection update failed:", error);
-    } else {
-      const { error } = await supabase.from("collections").insert({
-        id: collection.id,
-        workspace_id: DEFAULT_WORKSPACE_ID,
-        name: collection.name,
-      });
-      if (error) console.error("[Sync] Collection insert failed:", error);
-    }
+  // Batch upsert collections
+  const collectionRows = collections.map((col, i) => ({
+    id: col.id,
+    workspace_id: DEFAULT_WORKSPACE_ID,
+    name: col.name,
+    sort_order: i,
+    updated_at: now,
+  }));
 
-    await syncFolders(collection.id, collection.folders, null);
-    await syncRequests(collection.id, null, collection.requests);
+  if (collectionRows.length > 0) {
+    const { error } = await supabase.from("collections").upsert(collectionRows, { onConflict: "id" });
+    if (error) console.error("[Sync] Collections batch upsert failed:", error);
   }
 
-  // Delete removed collections
+  // Flatten all folders and requests for batch upsert
+  const allFolderRows: any[] = [];
+
+  for (const collection of collections) {
+    flattenFolders(collection.id, collection.folders, null, allFolderRows);
+  }
+
+  const allRequestRows = flattenAllRequests(collections);
+
+  // Batch upsert folders
+  if (allFolderRows.length > 0) {
+    // Supabase has a row limit per request, batch in chunks of 500
+    for (let i = 0; i < allFolderRows.length; i += 500) {
+      const chunk = allFolderRows.slice(i, i + 500);
+      const { error } = await supabase.from("folders").upsert(chunk, { onConflict: "id" });
+      if (error) console.error("[Sync] Folders batch upsert failed:", error);
+    }
+  }
+
+  // Batch upsert requests
+  if (allRequestRows.length > 0) {
+    for (let i = 0; i < allRequestRows.length; i += 500) {
+      const chunk = allRequestRows.slice(i, i + 500);
+      const { error } = await supabase.from("requests").upsert(chunk, { onConflict: "id" });
+      if (error) console.error("[Sync] Requests batch upsert failed:", error);
+    }
+  }
+
+  // Delete removed collections (diff against remote)
   const { data: remoteCollections } = await supabase
     .from("collections")
     .select("id")
@@ -202,62 +222,61 @@ export async function syncCollectionsToSupabase() {
 
   if (remoteCollections) {
     const localIds = new Set(collections.map((c) => c.id));
-    for (const remote of remoteCollections as any[]) {
-      if (!localIds.has(remote.id)) {
-        await supabase.from("collections").delete().eq("id", remote.id);
-      }
+    const toDelete = (remoteCollections as any[]).filter((r) => !localIds.has(r.id)).map((r) => r.id);
+    if (toDelete.length > 0) {
+      await supabase.from("collections").delete().in("id", toDelete);
+    }
+  }
+
+  // Delete removed folders
+  const { data: remoteFolders } = await supabase
+    .from("folders")
+    .select("id")
+    .in("collection_id", collections.map((c) => c.id));
+
+  if (remoteFolders) {
+    const localFolderIds = new Set(allFolderRows.map((f) => f.id));
+    const toDelete = (remoteFolders as any[]).filter((r) => !localFolderIds.has(r.id)).map((r) => r.id);
+    if (toDelete.length > 0) {
+      await supabase.from("folders").delete().in("id", toDelete);
+    }
+  }
+
+  // Delete removed requests
+  const { data: remoteRequests } = await supabase
+    .from("requests")
+    .select("id")
+    .in("collection_id", collections.map((c) => c.id));
+
+  if (remoteRequests) {
+    const localRequestIds = new Set(allRequestRows.map((r) => r.id));
+    const toDelete = (remoteRequests as any[]).filter((r) => !localRequestIds.has(r.id)).map((r) => r.id);
+    if (toDelete.length > 0) {
+      await supabase.from("requests").delete().in("id", toDelete);
     }
   }
 }
 
-async function syncFolders(collectionId: string, folders: Folder[], parentFolderId: string | null) {
-  const supabase = getSyncClient();
-  if (!supabase) return;
-
+function flattenFolders(collectionId: string, folders: Folder[], parentFolderId: string | null, outFolders: any[]) {
   for (let i = 0; i < folders.length; i++) {
     const folder = folders[i];
-
-    const { data: existing } = await supabase
-      .from("folders")
-      .select("id")
-      .eq("id", folder.id)
-      .single();
-
-    if (existing) {
-      await supabase
-        .from("folders")
-        .update({ name: folder.name, sort_order: i })
-        .eq("id", folder.id);
-    } else {
-      await supabase.from("folders").insert({
-        id: folder.id,
-        collection_id: collectionId,
-        parent_folder_id: parentFolderId,
-        name: folder.name,
-        sort_order: i,
-      });
-    }
-
-    await syncFolders(collectionId, folder.folders, folder.id);
-    await syncRequests(collectionId, folder.id, folder.requests);
+    outFolders.push({
+      id: folder.id,
+      collection_id: collectionId,
+      parent_folder_id: parentFolderId,
+      name: folder.name,
+      sort_order: i,
+    });
+    flattenFolders(collectionId, folder.folders, folder.id, outFolders);
   }
 }
 
-async function syncRequests(collectionId: string, folderId: string | null, requests: RequestItem[]) {
-  const supabase = getSyncClient();
-  if (!supabase) return;
-
+function flattenRequests(collectionId: string, folderId: string | null, requests: RequestItem[], out: any[]) {
+  const now = new Date().toISOString();
   for (let i = 0; i < requests.length; i++) {
     const req = requests[i];
-    const now = new Date().toISOString();
-
-    const { data: existing } = await supabase
-      .from("requests")
-      .select("id, updated_at")
-      .eq("id", req.id)
-      .single();
-
-    const requestData = {
+    out.push({
+      id: req.id,
       collection_id: collectionId,
       folder_id: folderId,
       name: req.name,
@@ -274,24 +293,28 @@ async function syncRequests(collectionId: string, folderId: string | null, reque
       auth_config: req.authConfig || {},
       sort_order: i,
       updated_at: now,
-    };
+    });
+  }
+}
 
-    if (existing) {
-      // Conflict resolution: only update if local is newer
-      const winner = await resolveConflict("requests", req.id, now);
-      if (winner === "local") {
-        const { error } = await supabase.from("requests").update(requestData).eq("id", req.id);
-        if (error) console.error("[Sync] Request update failed:", req.name, error);
-      }
-    } else {
-      const { error } = await supabase.from("requests").insert({ id: req.id, ...requestData });
-      if (error) console.error("[Sync] Request insert failed:", req.name, error);
-    }
+function flattenAllRequests(collections: Collection[]): any[] {
+  const out: any[] = [];
+  for (const col of collections) {
+    flattenRequests(col.id, null, col.requests, out);
+    flattenRequestsFromFolders(col.id, col.folders, out);
+  }
+  return out;
+}
+
+function flattenRequestsFromFolders(collectionId: string, folders: Folder[], out: any[]) {
+  for (const folder of folders) {
+    flattenRequests(collectionId, folder.id, folder.requests, out);
+    flattenRequestsFromFolders(collectionId, folder.folders, out);
   }
 }
 
 // ============================================
-// SYNC ENVIRONMENTS TO SUPABASE
+// SYNC ENVIRONMENTS TO SUPABASE (BATCH)
 // ============================================
 
 export async function syncEnvironmentsToSupabase() {
@@ -299,54 +322,37 @@ export async function syncEnvironmentsToSupabase() {
   if (!supabase) return;
 
   const { environments, globals } = useEnvironmentStore.getState();
+  const now = new Date().toISOString();
 
-  for (const env of environments) {
-    const { data: existing } = await supabase
-      .from("environments")
-      .select("id")
-      .eq("id", env.id)
-      .single();
+  // Batch upsert all environments
+  const envRows = environments.map((env) => ({
+    id: env.id,
+    workspace_id: DEFAULT_WORKSPACE_ID,
+    name: env.name,
+    variables: env.variables,
+    is_global: false,
+    updated_at: now,
+  }));
 
-    const envData = {
-      workspace_id: DEFAULT_WORKSPACE_ID,
-      name: env.name,
-      variables: env.variables,
-      is_global: false,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existing) {
-      await supabase.from("environments").update(envData).eq("id", env.id);
-    } else {
-      await supabase.from("environments").insert({ id: env.id, ...envData });
-    }
-  }
-
-  // Sync globals
+  // Add globals as a special environment
   const globalEnvId = "00000000-0000-0000-0000-000000000099";
-  const { data: existingGlobal } = await supabase
-    .from("environments")
-    .select("id")
-    .eq("id", globalEnvId)
-    .single();
-
-  const globalData = {
+  envRows.push({
+    id: globalEnvId,
     workspace_id: DEFAULT_WORKSPACE_ID,
     name: "Globals",
-    variables: globals,
+    variables: globals as any,
     is_global: true,
-    updated_at: new Date().toISOString(),
-  };
+    updated_at: now,
+  });
 
-  if (existingGlobal) {
-    await supabase.from("environments").update(globalData).eq("id", globalEnvId);
-  } else {
-    await supabase.from("environments").insert({ id: globalEnvId, ...globalData });
+  if (envRows.length > 0) {
+    const { error } = await supabase.from("environments").upsert(envRows, { onConflict: "id" });
+    if (error) console.error("[Sync] Environments batch upsert failed:", error);
   }
 }
 
 // ============================================
-// SYNC FLOWS TO SUPABASE
+// SYNC FLOWS TO SUPABASE (BATCH)
 // ============================================
 
 export async function syncFlowsToSupabase() {
@@ -354,30 +360,24 @@ export async function syncFlowsToSupabase() {
   if (!supabase) return;
 
   const { flows } = useFlowStore.getState();
+  const now = new Date().toISOString();
 
-  for (const flow of flows) {
-    const { data: existing } = await supabase
-      .from("flows")
-      .select("id")
-      .eq("id", flow.id)
-      .single();
+  const flowRows = flows.map((flow) => ({
+    id: flow.id,
+    workspace_id: DEFAULT_WORKSPACE_ID,
+    name: flow.name,
+    description: flow.description || "",
+    steps: flow.steps,
+    delay_between_requests: flow.delayBetweenRequests || 0,
+    updated_at: now,
+  }));
 
-    const flowData = {
-      workspace_id: DEFAULT_WORKSPACE_ID,
-      name: flow.name,
-      description: flow.description || "",
-      steps: flow.steps,
-      delay_between_requests: flow.delayBetweenRequests || 0,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existing) {
-      await supabase.from("flows").update(flowData).eq("id", flow.id);
-    } else {
-      await supabase.from("flows").insert({ id: flow.id, ...flowData });
-    }
+  if (flowRows.length > 0) {
+    const { error } = await supabase.from("flows").upsert(flowRows, { onConflict: "id" });
+    if (error) console.error("[Sync] Flows batch upsert failed:", error);
   }
 
+  // Delete removed flows
   const { data: remoteFlows } = await supabase
     .from("flows")
     .select("id")
@@ -385,16 +385,15 @@ export async function syncFlowsToSupabase() {
 
   if (remoteFlows) {
     const localIds = new Set(flows.map((f) => f.id));
-    for (const remote of remoteFlows as any[]) {
-      if (!localIds.has(remote.id)) {
-        await supabase.from("flows").delete().eq("id", remote.id);
-      }
+    const toDelete = (remoteFlows as any[]).filter((r) => !localIds.has(r.id)).map((r) => r.id);
+    if (toDelete.length > 0) {
+      await supabase.from("flows").delete().in("id", toDelete);
     }
   }
 }
 
 // ============================================
-// SYNC MOCK SERVERS TO SUPABASE
+// SYNC MOCK SERVERS TO SUPABASE (BATCH)
 // ============================================
 
 export async function syncMockServersToSupabase() {
@@ -402,36 +401,29 @@ export async function syncMockServersToSupabase() {
   if (!supabase) return;
 
   const { servers } = useMockStore.getState();
+  const now = new Date().toISOString();
 
+  // Batch upsert servers
+  const serverRows = servers.map((server) => ({
+    id: server.id,
+    workspace_id: DEFAULT_WORKSPACE_ID,
+    name: server.name,
+    base_path: server.baseUrl || `/mock/${server.id.slice(0, 8)}`,
+    is_active: server.isActive,
+    updated_at: now,
+  }));
+
+  if (serverRows.length > 0) {
+    const { error } = await supabase.from("mock_servers").upsert(serverRows, { onConflict: "id" });
+    if (error) console.error("[Sync] Mock servers batch upsert failed:", error);
+  }
+
+  // Batch upsert all routes
+  const allRouteRows: any[] = [];
   for (const server of servers) {
-    const { data: existing } = await supabase
-      .from("mock_servers")
-      .select("id")
-      .eq("id", server.id)
-      .single();
-
-    const serverData = {
-      workspace_id: DEFAULT_WORKSPACE_ID,
-      name: server.name,
-      base_path: server.baseUrl || `/mock/${server.id.slice(0, 8)}`,
-      is_active: server.isActive,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (existing) {
-      await supabase.from("mock_servers").update(serverData).eq("id", server.id);
-    } else {
-      await supabase.from("mock_servers").insert({ id: server.id, ...serverData });
-    }
-
     for (const route of server.routes) {
-      const { data: existingRoute } = await supabase
-        .from("mock_routes")
-        .select("id")
-        .eq("id", route.id)
-        .single();
-
-      const routeData = {
+      allRouteRows.push({
+        id: route.id,
         mock_server_id: server.id,
         method: route.method,
         path: route.path,
@@ -440,16 +432,19 @@ export async function syncMockServersToSupabase() {
         response_body: route.responseBody,
         delay_ms: route.delayMs,
         is_active: route.isActive,
-      };
-
-      if (existingRoute) {
-        await supabase.from("mock_routes").update(routeData).eq("id", route.id);
-      } else {
-        await supabase.from("mock_routes").insert({ id: route.id, ...routeData });
-      }
+      });
     }
   }
 
+  if (allRouteRows.length > 0) {
+    for (let i = 0; i < allRouteRows.length; i += 500) {
+      const chunk = allRouteRows.slice(i, i + 500);
+      const { error } = await supabase.from("mock_routes").upsert(chunk, { onConflict: "id" });
+      if (error) console.error("[Sync] Mock routes batch upsert failed:", error);
+    }
+  }
+
+  // Delete removed servers
   const { data: remoteServers } = await supabase
     .from("mock_servers")
     .select("id")
@@ -457,10 +452,9 @@ export async function syncMockServersToSupabase() {
 
   if (remoteServers) {
     const localIds = new Set(servers.map((s) => s.id));
-    for (const remote of remoteServers as any[]) {
-      if (!localIds.has(remote.id)) {
-        await supabase.from("mock_servers").delete().eq("id", remote.id);
-      }
+    const toDelete = (remoteServers as any[]).filter((r) => !localIds.has(r.id)).map((r) => r.id);
+    if (toDelete.length > 0) {
+      await supabase.from("mock_servers").delete().in("id", toDelete);
     }
   }
 }
@@ -498,7 +492,7 @@ export async function syncCookiesToSupabase() {
 }
 
 // ============================================
-// SYNC HISTORY TO SUPABASE
+// SYNC HISTORY TO SUPABASE (BATCH)
 // ============================================
 
 export async function syncHistoryToSupabase() {
@@ -506,25 +500,32 @@ export async function syncHistoryToSupabase() {
   if (!supabase) return;
 
   const { history } = useRequestStore.getState();
+  const items = history.slice(0, 50);
 
-  for (const item of history.slice(0, 50)) {
-    const { data: existing } = await supabase
-      .from("request_history")
-      .select("id")
-      .eq("id", item.id)
-      .single();
+  if (items.length === 0) return;
 
-    if (!existing) {
-      await supabase.from("request_history").insert({
-        id: item.id,
-        user_id: DEFAULT_USER_ID,
-        workspace_id: DEFAULT_WORKSPACE_ID,
-        method: item.method,
-        url: item.url,
-        status: item.status,
-        response_time: item.time,
-      });
-    }
+  // Get existing IDs to avoid duplicates
+  const { data: existing } = await supabase
+    .from("request_history")
+    .select("id")
+    .in("id", items.map((i) => i.id));
+
+  const existingIds = new Set((existing || []).map((e: any) => e.id));
+  const newItems = items.filter((i) => !existingIds.has(i.id));
+
+  if (newItems.length > 0) {
+    const rows = newItems.map((item) => ({
+      id: item.id,
+      user_id: DEFAULT_USER_ID,
+      workspace_id: DEFAULT_WORKSPACE_ID,
+      method: item.method,
+      url: item.url,
+      status: item.status,
+      response_time: item.time,
+    }));
+
+    const { error } = await supabase.from("request_history").insert(rows);
+    if (error) console.error("[Sync] History batch insert failed:", error);
   }
 }
 
@@ -535,6 +536,16 @@ export async function syncHistoryToSupabase() {
 let syncTimeout: ReturnType<typeof setTimeout> | null = null;
 
 export function scheduleSyncToSupabase() {
+  // If offline, queue changes instead of syncing
+  if (!isOnline) {
+    const domains = dirtySet.size > 0 ? [...dirtySet] : [];
+    for (const domain of domains) {
+      queueOfflineChange(domain);
+    }
+    dirtySet.clear();
+    return;
+  }
+
   if (syncTimeout) clearTimeout(syncTimeout);
   syncTimeout = setTimeout(async () => {
     const syncStore = useSyncStore.getState();
@@ -561,10 +572,13 @@ export function scheduleSyncToSupabase() {
       }
 
       useSyncStore.getState().setSynced();
+      useSyncHealthStore.getState().addEvent("sync-success", `Synced ${domains.length} domain(s)`);
       console.log("[Sync] Sync completed successfully");
     } catch (err) {
       console.error("[Sync] Sync failed:", err);
       useSyncStore.getState().setError(err instanceof Error ? err.message : "Sync failed");
+      useSyncHealthStore.getState().addEvent("sync-error", err instanceof Error ? err.message : "Sync failed");
+      useToastStore.getState().addToast("error", "Sync failed. Will retry automatically.");
     }
   }, 2000);
 }
@@ -575,54 +589,438 @@ export function scheduleSyncToSupabase() {
 
 let realtimeChannel: any = null;
 let isReceivingRemote = false;
+let realtimeSubscribeTimer: ReturnType<typeof setTimeout> | null = null;
+let realtimeAborted = false;
+let realtimeRetryAttempt = 0;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let lastHeartbeatResponse = Date.now();
+
+// Exponential backoff config for realtime reconnection
+const REALTIME_BASE_DELAY = 5000;
+const REALTIME_MAX_DELAY = 60000;
+const HEARTBEAT_INTERVAL = 30000; // 30s
+const HEARTBEAT_TIMEOUT = 10000; // 10s without response = stale
+
+// Flag to prevent sync loop: when loading from remote, store changes should NOT trigger sync back
+let isSyncingFromRemote = false;
+
+export function getIsSyncingFromRemote() {
+  return isSyncingFromRemote;
+}
+
+// ============================================
+// PER-TAB DEDUP via BroadcastChannel
+// ============================================
+
+let broadcastChannel: BroadcastChannel | null = null;
+let isLeaderTab = true;
+let leaderHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
+let leaderCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function initTabLeaderElection() {
+  if (typeof window === "undefined" || !("BroadcastChannel" in window)) {
+    // No BroadcastChannel support — this tab is always leader
+    isLeaderTab = true;
+    useSyncStore.getState().setIsLeaderTab(true);
+    return;
+  }
+
+  broadcastChannel = new BroadcastChannel("hantara-realtime-leader");
+
+  broadcastChannel.onmessage = (event) => {
+    const { type, tabId } = event.data;
+
+    if (type === "leader-claim" && tabId !== getTabId()) {
+      // Another tab claimed leadership
+      isLeaderTab = false;
+      useSyncStore.getState().setIsLeaderTab(false);
+      stopRealtimeSubscription();
+    } else if (type === "leader-heartbeat" && tabId !== getTabId()) {
+      // Leader is alive, reset check timeout
+      if (leaderCheckTimeout) clearTimeout(leaderCheckTimeout);
+      leaderCheckTimeout = setTimeout(tryClaimLeadership, 5000);
+    } else if (type === "leader-resign") {
+      // Leader resigned, try to claim
+      setTimeout(tryClaimLeadership, Math.random() * 500);
+    } else if (type === "realtime-change") {
+      // Forwarded realtime change from leader tab
+      if (!isLeaderTab) {
+        handleRealtimeChange(event.data.payload);
+      }
+    }
+  };
+
+  // Try to claim leadership on init
+  tryClaimLeadership();
+}
+
+function tryClaimLeadership() {
+  isLeaderTab = true;
+  useSyncStore.getState().setIsLeaderTab(true);
+  broadcastChannel?.postMessage({ type: "leader-claim", tabId: getTabId() });
+
+  // Start heartbeat
+  if (leaderHeartbeatInterval) clearInterval(leaderHeartbeatInterval);
+  leaderHeartbeatInterval = setInterval(() => {
+    if (isLeaderTab) {
+      broadcastChannel?.postMessage({ type: "leader-heartbeat", tabId: getTabId() });
+    }
+  }, 2000);
+}
+
+function resignLeadership() {
+  if (!isLeaderTab) return;
+  isLeaderTab = false;
+  useSyncStore.getState().setIsLeaderTab(false);
+  broadcastChannel?.postMessage({ type: "leader-resign", tabId: getTabId() });
+  if (leaderHeartbeatInterval) {
+    clearInterval(leaderHeartbeatInterval);
+    leaderHeartbeatInterval = null;
+  }
+}
+
+let _tabId: string | null = null;
+function getTabId(): string {
+  if (!_tabId) {
+    _tabId = crypto.randomUUID();
+  }
+  return _tabId;
+}
+
+function destroyTabLeaderElection() {
+  resignLeadership();
+  if (leaderCheckTimeout) clearTimeout(leaderCheckTimeout);
+  if (leaderHeartbeatInterval) clearInterval(leaderHeartbeatInterval);
+  broadcastChannel?.close();
+  broadcastChannel = null;
+}
+
+// ============================================
+// OFFLINE QUEUE
+// ============================================
+
+let isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
+
+function initOfflineDetection() {
+  if (typeof window === "undefined") return;
+
+  window.addEventListener("online", handleOnline);
+  window.addEventListener("offline", handleOffline);
+}
+
+function destroyOfflineDetection() {
+  if (typeof window === "undefined") return;
+  window.removeEventListener("online", handleOnline);
+  window.removeEventListener("offline", handleOffline);
+}
+
+function handleOnline() {
+  isOnline = true;
+  console.log("[Realtime] Back online — flushing offline queue and reconnecting");
+  useSyncHealthStore.getState().addEvent("online", "Network connection restored");
+  useToastStore.getState().addToast("success", "Back online — syncing queued changes");
+  flushOfflineQueue();
+  // Reconnect realtime
+  if (isLeaderTab) {
+    subscribeToRealtime();
+  }
+}
+
+function handleOffline() {
+  isOnline = false;
+  console.log("[Realtime] Went offline — queuing changes locally");
+  useSyncStore.getState().setRealtimeStatus("disconnected");
+  useSyncHealthStore.getState().addEvent("offline", "Network connection lost");
+  useToastStore.getState().addToast("error", "You are offline. Changes will be saved locally.");
+}
+
+async function flushOfflineQueue() {
+  const { offlineQueue } = useSyncStore.getState();
+  if (offlineQueue.length === 0) return;
+
+  console.log("[Sync] Flushing", offlineQueue.length, "offline changes");
+
+  // Mark all domains dirty and trigger sync
+  for (const change of offlineQueue) {
+    markDirty(change.domain as DirtyDomain);
+  }
+  useSyncStore.getState().clearOfflineQueue();
+  scheduleSyncToSupabase();
+}
+
+export function queueOfflineChange(domain: string, data?: any) {
+  if (isOnline) return false; // Not offline, don't queue
+
+  useSyncStore.getState().enqueueOfflineChange({
+    id: crypto.randomUUID(),
+    domain,
+    timestamp: Date.now(),
+    data,
+  });
+  return true; // Queued
+}
+
+// ============================================
+// HEARTBEAT / PING CHECK
+// ============================================
+
+function startHeartbeat() {
+  stopHeartbeat();
+  lastHeartbeatResponse = Date.now();
+
+  heartbeatInterval = setInterval(() => {
+    if (!realtimeChannel) return;
+
+    const timeSinceLastResponse = Date.now() - lastHeartbeatResponse;
+
+    if (timeSinceLastResponse > HEARTBEAT_INTERVAL + HEARTBEAT_TIMEOUT) {
+      // Connection is stale — force reconnect
+      console.warn("[Realtime] Heartbeat timeout — connection stale, reconnecting...");
+      useSyncStore.getState().setRealtimeStatus("reconnecting");
+      useSyncHealthStore.getState().addEvent("reconnecting", "Heartbeat timeout — connection stale");
+      useToastStore.getState().addToast("warning", "Sync connection stale. Reconnecting...");
+      stopRealtimeSubscription();
+      subscribeToRealtime();
+    }
+  }, HEARTBEAT_INTERVAL);
+}
+
+function stopHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+}
+
+function onHeartbeatReceived() {
+  const now = Date.now();
+  if (lastHeartbeatResponse > 0) {
+    const latency = now - lastHeartbeatResponse;
+    // Only update latency if it's a reasonable measurement (not first call)
+    if (latency < HEARTBEAT_INTERVAL * 2) {
+      useSyncHealthStore.getState().setLatency(latency);
+    }
+  }
+  lastHeartbeatResponse = now;
+  useSyncHealthStore.getState().setLastPing(now);
+}
+
+// ============================================
+// SUBSCRIBE / UNSUBSCRIBE
+// ============================================
 
 export function subscribeToRealtime() {
   const supabase = getSyncClient();
   if (!supabase) return;
 
+  // Initialize tab leader election on first call
+  if (!broadcastChannel && typeof window !== "undefined") {
+    initTabLeaderElection();
+    initOfflineDetection();
+  }
+
+  // Only leader tab subscribes to realtime
+  if (!isLeaderTab) {
+    useSyncStore.getState().setRealtimeStatus("connected");
+    return;
+  }
+
+  if (!isOnline) {
+    useSyncStore.getState().setRealtimeStatus("disconnected");
+    return;
+  }
+
+  // Reset abort flag
+  realtimeAborted = false;
+
   // Unsubscribe existing
   if (realtimeChannel) {
     supabase.removeChannel(realtimeChannel);
+    realtimeChannel = null;
   }
 
-  realtimeChannel = supabase
-    .channel("workspace-sync")
-    .on("postgres_changes", {
-      event: "*",
-      schema: "public",
-      table: "collections",
-      filter: `workspace_id=eq.${DEFAULT_WORKSPACE_ID}`,
-    }, handleRealtimeChange)
-    .on("postgres_changes", {
-      event: "*",
-      schema: "public",
-      table: "requests",
-    }, handleRealtimeChange)
-    .on("postgres_changes", {
-      event: "*",
-      schema: "public",
-      table: "folders",
-    }, handleRealtimeChange)
-    .on("postgres_changes", {
-      event: "*",
-      schema: "public",
-      table: "environments",
-      filter: `workspace_id=eq.${DEFAULT_WORKSPACE_ID}`,
-    }, handleRealtimeChange)
-    .subscribe((status: string) => {
-      console.log("[Realtime] Subscription status:", status);
-    });
+  // Clear any pending subscribe timer
+  if (realtimeSubscribeTimer) {
+    clearTimeout(realtimeSubscribeTimer);
+    realtimeSubscribeTimer = null;
+  }
+
+  useSyncStore.getState().setRealtimeStatus(
+    realtimeRetryAttempt > 0 ? "reconnecting" : "connecting"
+  );
+
+  // Delay subscription to avoid race condition with React Strict Mode double-mount
+  realtimeSubscribeTimer = setTimeout(() => {
+    realtimeSubscribeTimer = null;
+    if (realtimeAborted) return;
+
+    const client = getSyncClient();
+    if (!client) return;
+
+    realtimeChannel = client
+      .channel("workspace-sync")
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "collections",
+        filter: `workspace_id=eq.${DEFAULT_WORKSPACE_ID}`,
+      }, handleRealtimeChangeWithBroadcast)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "requests",
+      }, handleRealtimeChangeWithBroadcast)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "folders",
+      }, handleRealtimeChangeWithBroadcast)
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "environments",
+        filter: `workspace_id=eq.${DEFAULT_WORKSPACE_ID}`,
+      }, handleRealtimeChangeWithBroadcast)
+      .subscribe((status: string) => {
+        if (status === "SUBSCRIBED") {
+          console.log("[Realtime] Connected successfully");
+          useSyncStore.getState().setRealtimeStatus("connected");
+          useSyncStore.getState().resetRealtimeRetry();
+          useSyncHealthStore.getState().addEvent("connected", "Realtime connection established");
+          if (realtimeRetryAttempt > 0) {
+            useToastStore.getState().addToast("success", "Sync reconnected successfully");
+          }
+          realtimeRetryAttempt = 0;
+          onHeartbeatReceived();
+          startHeartbeat();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn(`[Realtime] ${status} — will retry with backoff`);
+          useSyncStore.getState().setRealtimeStatus("reconnecting");
+          useSyncStore.getState().incrementRealtimeRetry();
+          useSyncHealthStore.getState().addEvent("reconnecting", `Channel ${status.toLowerCase()} — retrying...`);
+          if (realtimeRetryAttempt === 0) {
+            useToastStore.getState().addToast("warning", "Sync connection lost. Reconnecting...");
+          }
+          stopHeartbeat();
+          scheduleRealtimeRetry();
+        } else if (status === "CLOSED") {
+          useSyncStore.getState().setRealtimeStatus("disconnected");
+          useSyncHealthStore.getState().addEvent("disconnected", "Realtime channel closed");
+          stopHeartbeat();
+        }
+      });
+  }, 100);
+}
+
+function scheduleRealtimeRetry() {
+  realtimeRetryAttempt++;
+  // Exponential backoff: 5s → 10s → 20s → 40s → 60s (capped)
+  const delay = Math.min(
+    REALTIME_BASE_DELAY * Math.pow(2, realtimeRetryAttempt - 1),
+    REALTIME_MAX_DELAY
+  ) + Math.random() * 1000;
+
+  console.log(`[Realtime] Retrying in ${Math.round(delay / 1000)}s (attempt ${realtimeRetryAttempt})`);
+
+  setTimeout(() => {
+    if (!realtimeAborted && isLeaderTab && isOnline) {
+      subscribeToRealtime();
+    }
+  }, delay);
+}
+
+function stopRealtimeSubscription() {
+  const supabase = getSyncClient();
+  if (supabase && realtimeChannel) {
+    supabase.removeChannel(realtimeChannel);
+    realtimeChannel = null;
+  }
+  stopHeartbeat();
 }
 
 export function unsubscribeFromRealtime() {
-  const supabase = getSyncClient();
-  if (!supabase || !realtimeChannel) return;
-  supabase.removeChannel(realtimeChannel);
-  realtimeChannel = null;
+  // Abort any pending delayed subscription
+  realtimeAborted = true;
+  if (realtimeSubscribeTimer) {
+    clearTimeout(realtimeSubscribeTimer);
+    realtimeSubscribeTimer = null;
+  }
+
+  stopRealtimeSubscription();
+  destroyTabLeaderElection();
+  destroyOfflineDetection();
+  useSyncStore.getState().setRealtimeStatus("disconnected");
+}
+
+// Wrapper that forwards changes to other tabs via BroadcastChannel
+function handleRealtimeChangeWithBroadcast(payload: any) {
+  onHeartbeatReceived(); // Any message = connection alive
+
+  // Selective subscription: only process changes for active tables
+  if (activeTables.size > 0 && !activeTables.has(payload.table)) {
+    return; // Ignore changes for tables not actively being edited
+  }
+
+  // Forward to non-leader tabs
+  if (broadcastChannel && isLeaderTab) {
+    broadcastChannel.postMessage({ type: "realtime-change", payload });
+  }
+
+  handleRealtimeChange(payload);
+}
+
+// ============================================
+// SELECTIVE REALTIME SUBSCRIPTION
+// ============================================
+
+// Track which tables are actively being edited — empty = subscribe to all
+const activeTables = new Set<string>();
+
+/**
+ * Set which tables to actively listen for realtime changes.
+ * Pass empty array to listen to all tables (default behavior).
+ * Pass specific tables to reduce bandwidth and processing.
+ * 
+ * Example: setActiveTables(["requests", "collections"])
+ */
+export function setActiveTables(tables: string[]) {
+  activeTables.clear();
+  tables.forEach((t) => activeTables.add(t));
+}
+
+/**
+ * Add a table to the active subscription set.
+ * When a user starts editing a request, call addActiveTable("requests").
+ */
+export function addActiveTable(table: string) {
+  activeTables.add(table);
+}
+
+/**
+ * Remove a table from the active subscription set.
+ * When a user stops editing, call removeActiveTable("requests").
+ */
+export function removeActiveTable(table: string) {
+  activeTables.delete(table);
+}
+
+/**
+ * Clear all active table filters — listen to everything.
+ */
+export function clearActiveTableFilter() {
+  activeTables.clear();
 }
 
 // Debounced reload from remote on realtime change
 let realtimeReloadTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Conflict callback — set by SyncProvider
+type ConflictCallback = (payload: { table: string; eventType: string; requestId?: string }) => void;
+let onConflictDetected: ConflictCallback | null = null;
+
+export function setConflictCallback(cb: ConflictCallback | null) {
+  onConflictDetected = cb;
+}
 
 function handleRealtimeChange(payload: any) {
   // Ignore changes we just made ourselves
@@ -630,16 +1028,42 @@ function handleRealtimeChange(payload: any) {
 
   console.log("[Realtime] Change detected:", payload.table, payload.eventType);
 
+  // Check for conflict: if the change is for the active request and user has dirty edits
+  if (payload.table === "requests" && payload.new?.id) {
+    const { useCollectionStore } = require("@/store/collection-store");
+    const { useTabStore } = require("@/store/tab-store");
+    const activeRequestId = useCollectionStore.getState().activeRequestId;
+    const activeTab = useTabStore.getState().tabs.find(
+      (t: any) => t.id === useTabStore.getState().activeTabId
+    );
+
+    if (activeRequestId === payload.new.id && activeTab?.isDirty) {
+      // Conflict detected — notify UI instead of silently overwriting
+      if (onConflictDetected) {
+        onConflictDetected({
+          table: payload.table,
+          eventType: payload.eventType,
+          requestId: payload.new.id,
+        });
+        return; // Don't auto-reload, let user decide
+      }
+    }
+  }
+
   // Debounce reload to avoid rapid-fire updates
   if (realtimeReloadTimeout) clearTimeout(realtimeReloadTimeout);
   realtimeReloadTimeout = setTimeout(async () => {
     isReceivingRemote = true;
+    isSyncingFromRemote = true;
     try {
       await loadFromSupabase();
       console.log("[Realtime] Reloaded data from remote");
     } finally {
-      // Reset flag after a short delay to allow sync to settle
-      setTimeout(() => { isReceivingRemote = false; }, 3000);
+      // Reset flags after a short delay to allow sync to settle
+      setTimeout(() => {
+        isReceivingRemote = false;
+        isSyncingFromRemote = false;
+      }, 3000);
     }
   }, 1000);
 }

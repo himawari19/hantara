@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface RequestItem {
   id: string;
@@ -24,6 +25,7 @@ export interface Folder {
   folders: Folder[];
   isOpen: boolean;
   auth?: { type: "none" | "bearer" | "basic" | "api-key" | "oauth2"; config: Record<string, string> };
+  defaultHeaders?: { key: string; value: string; enabled: boolean }[];
   variables?: { key: string; value: string; enabled: boolean }[];
 }
 
@@ -34,6 +36,7 @@ export interface Collection {
   folders: Folder[];
   isOpen: boolean;
   auth?: { type: "none" | "bearer" | "basic" | "api-key" | "oauth2"; config: Record<string, string> };
+  defaultHeaders?: { key: string; value: string; enabled: boolean }[];
   variables?: { key: string; value: string; enabled: boolean }[];
 }
 
@@ -64,7 +67,13 @@ interface CollectionState {
   // Collection-level settings
   updateCollectionAuth: (collectionId: string, auth: Collection["auth"]) => void;
   updateCollectionVariables: (collectionId: string, variables: Collection["variables"]) => void;
+  updateCollectionHeaders: (collectionId: string, headers: Collection["defaultHeaders"]) => void;
   updateFolderAuth: (collectionId: string, folderId: string, auth: Folder["auth"]) => void;
+  updateFolderHeaders: (collectionId: string, folderId: string, headers: Folder["defaultHeaders"]) => void;
+
+  // Inheritance helpers
+  getInheritedAuth: (requestId: string) => { type: string; config: Record<string, string> } | null;
+  getInheritedHeaders: (requestId: string) => { key: string; value: string; enabled: boolean }[];
 
   // Drag & Drop / Move
   moveRequest: (requestId: string, targetCollectionId: string, targetFolderId: string | null, targetIndex: number) => void;
@@ -175,6 +184,24 @@ function updateFolderAuthById(folders: Folder[], folderId: string, auth: Folder[
     if (f.id === folderId) return { ...f, auth };
     return { ...f, folders: updateFolderAuthById(f.folders, folderId, auth) };
   });
+}
+
+function updateFolderHeadersById(folders: Folder[], folderId: string, headers: Folder["defaultHeaders"]): Folder[] {
+  return folders.map((f) => {
+    if (f.id === folderId) return { ...f, defaultHeaders: headers };
+    return { ...f, folders: updateFolderHeadersById(f.folders, folderId, headers) };
+  });
+}
+
+// Find the path from collection root to a request (returns array of folders)
+function findRequestPath(folders: Folder[], requestId: string, path: Folder[] = []): Folder[] | null {
+  for (const folder of folders) {
+    const found = folder.requests.find((r) => r.id === requestId);
+    if (found) return [...path, folder];
+    const nested = findRequestPath(folder.folders, requestId, [...path, folder]);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 function removeRequestFromFoldersWithReturn(folders: Folder[], requestId: string): { folders: Folder[]; found: RequestItem | null } {
@@ -431,6 +458,78 @@ export const useCollectionStore = create<CollectionState>()(
         }));
       },
 
+      updateCollectionHeaders: (collectionId, headers) => {
+        set((state) => ({
+          collections: state.collections.map((c) =>
+            c.id === collectionId ? { ...c, defaultHeaders: headers } : c
+          ),
+        }));
+      },
+
+      updateFolderHeaders: (collectionId, folderId, headers) => {
+        set((state) => ({
+          collections: state.collections.map((c) => {
+            if (c.id !== collectionId) return c;
+            return { ...c, folders: updateFolderHeadersById(c.folders, folderId, headers) };
+          }),
+        }));
+      },
+
+      getInheritedAuth: (requestId) => {
+        const state = get();
+        for (const collection of state.collections) {
+          // Check if request is at collection root
+          const inRoot = collection.requests.find((r) => r.id === requestId);
+          if (inRoot) {
+            if (inRoot.authType !== "none") return null; // Request has its own auth
+            if (collection.auth && collection.auth.type !== "none") return collection.auth;
+            return null;
+          }
+          // Check in folders
+          const path = findRequestPath(collection.folders, requestId);
+          if (path) {
+            // Walk from deepest folder up to collection
+            for (let i = path.length - 1; i >= 0; i--) {
+              const folder = path[i];
+              if (folder.auth && folder.auth.type !== "none") return folder.auth;
+            }
+            if (collection.auth && collection.auth.type !== "none") return collection.auth;
+            return null;
+          }
+        }
+        return null;
+      },
+
+      getInheritedHeaders: (requestId) => {
+        const state = get();
+        const inherited: { key: string; value: string; enabled: boolean }[] = [];
+
+        for (const collection of state.collections) {
+          const inRoot = collection.requests.find((r) => r.id === requestId);
+          if (inRoot) {
+            if (collection.defaultHeaders) {
+              inherited.push(...collection.defaultHeaders.filter((h) => h.enabled && h.key.trim()));
+            }
+            return inherited;
+          }
+          const path = findRequestPath(collection.folders, requestId);
+          if (path) {
+            // Collection headers first (lowest priority)
+            if (collection.defaultHeaders) {
+              inherited.push(...collection.defaultHeaders.filter((h) => h.enabled && h.key.trim()));
+            }
+            // Then folder headers (deeper = higher priority)
+            for (const folder of path) {
+              if (folder.defaultHeaders) {
+                inherited.push(...folder.defaultHeaders.filter((h) => h.enabled && h.key.trim()));
+              }
+            }
+            return inherited;
+          }
+        }
+        return inherited;
+      },
+
       // Drag & Drop
       moveRequest: (requestId, targetCollectionId, targetFolderId, targetIndex) => {
         set((state) => {
@@ -500,7 +599,12 @@ export const useCollectionStore = create<CollectionState>()(
     }),
     {
       name: "hantara-collections",
+      storage: idbStorage,
       version: 2,
+      partialize: (state) => ({
+        collections: state.collections,
+        activeRequestId: state.activeRequestId,
+      }),
       migrate: (persistedState: any, version: number) => {
         if (version < 2) {
           // Migrate old requests to include new fields

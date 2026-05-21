@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useCollectionStore, Collection } from "@/store/collection-store";
-import { X, Shield, Variable, Plus, Trash2 } from "lucide-react";
+import { X, Shield, Variable, Plus, Trash2, FileText } from "lucide-react";
 
 interface CollectionSettingsProps {
   collectionId: string;
@@ -10,9 +10,9 @@ interface CollectionSettingsProps {
 }
 
 export function CollectionSettings({ collectionId, onClose }: CollectionSettingsProps) {
-  const { collections, updateCollectionAuth, updateCollectionVariables } = useCollectionStore();
+  const { collections, updateCollectionAuth, updateCollectionVariables, updateCollectionHeaders } = useCollectionStore();
   const collection = collections.find((c) => c.id === collectionId);
-  const [activeTab, setActiveTab] = useState<"auth" | "variables">("auth");
+  const [activeTab, setActiveTab] = useState<"auth" | "headers" | "variables">("auth");
 
   if (!collection) return null;
 
@@ -48,6 +48,17 @@ export function CollectionSettings({ collectionId, onClose }: CollectionSettings
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("headers")}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs ${
+              activeTab === "headers"
+                ? "border-b-2 border-[var(--accent)] text-[var(--text-primary)] font-medium"
+                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            <FileText size={12} /> Default Headers
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("variables")}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-xs ${
               activeTab === "variables"
@@ -64,6 +75,9 @@ export function CollectionSettings({ collectionId, onClose }: CollectionSettings
           {activeTab === "auth" && (
             <CollectionAuthEditor collection={collection} onUpdate={updateCollectionAuth} />
           )}
+          {activeTab === "headers" && (
+            <CollectionHeadersEditor collection={collection} onUpdate={updateCollectionHeaders} />
+          )}
           {activeTab === "variables" && (
             <CollectionVariablesEditor collection={collection} onUpdate={updateCollectionVariables} />
           )}
@@ -72,7 +86,7 @@ export function CollectionSettings({ collectionId, onClose }: CollectionSettings
         {/* Info */}
         <div className="border-t border-[var(--border)] px-4 py-2">
           <p className="text-[10px] text-[var(--text-secondary)]">
-            These settings are inherited by all requests in this collection unless overridden.
+            These settings are inherited by all requests in this collection unless overridden at the folder or request level.
           </p>
         </div>
       </div>
@@ -269,6 +283,90 @@ function CollectionVariablesEditor({
             </button>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function CollectionHeadersEditor({
+  collection,
+  onUpdate,
+}: {
+  collection: Collection;
+  onUpdate: (id: string, headers: Collection["defaultHeaders"]) => void;
+}) {
+  const headers = collection.defaultHeaders || [{ key: "", value: "", enabled: true }];
+
+  const updateHeader = (index: number, field: "key" | "value" | "enabled", value: string | boolean) => {
+    const newHeaders = [...headers];
+    newHeaders[index] = { ...newHeaders[index], [field]: value };
+
+    // Auto-add empty row
+    const last = newHeaders[newHeaders.length - 1];
+    if (last.key.trim() || last.value.trim()) {
+      newHeaders.push({ key: "", value: "", enabled: true });
+    }
+
+    onUpdate(collection.id, newHeaders);
+  };
+
+  const removeHeader = (index: number) => {
+    if (headers.length <= 1) return;
+    onUpdate(collection.id, headers.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs text-[var(--text-secondary)]">
+        Default headers applied to all requests in this collection. Requests can override these by defining the same header key.
+      </p>
+
+      <div className="flex flex-col gap-1.5">
+        <div className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-2 text-[10px] text-[var(--text-secondary)]">
+          <span className="w-5"></span>
+          <span>Header Name</span>
+          <span>Value</span>
+          <span className="w-6"></span>
+        </div>
+        {headers.map((h, i) => (
+          <div key={i} className="grid grid-cols-[auto_1fr_1fr_auto] items-center gap-2">
+            <input
+              type="checkbox"
+              checked={h.enabled}
+              onChange={(e) => updateHeader(i, "enabled", e.target.checked)}
+              className="h-3.5 w-3.5 accent-[var(--accent)]"
+              aria-label={`Enable header ${h.key || i + 1}`}
+            />
+            <input
+              type="text"
+              value={h.key}
+              onChange={(e) => updateHeader(i, "key", e.target.value)}
+              placeholder="Header name (e.g. Authorization)"
+              className="rounded bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none"
+            />
+            <input
+              type="text"
+              value={h.value}
+              onChange={(e) => updateHeader(i, "value", e.target.value)}
+              placeholder="Value"
+              className="rounded bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-primary)] placeholder-[var(--text-secondary)] outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => removeHeader(i)}
+              className="rounded p-0.5 text-[var(--text-secondary)] hover:text-[var(--error)]"
+              aria-label="Remove header"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded bg-[var(--bg-tertiary)] p-2">
+        <p className="text-[10px] text-[var(--text-secondary)]">
+          💡 Common use cases: <code className="text-[var(--accent)]">Authorization</code>, <code className="text-[var(--accent)]">Content-Type</code>, <code className="text-[var(--accent)]">X-API-Key</code>, <code className="text-[var(--accent)]">Accept</code>
+        </p>
       </div>
     </div>
   );

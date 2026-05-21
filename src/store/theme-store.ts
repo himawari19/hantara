@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 type Theme = "dark" | "light";
 
@@ -29,6 +30,7 @@ export const useThemeStore = create<ThemeState>()(
     }),
     {
       name: "hantara-theme",
+      storage: idbStorage,
       onRehydrateStorage: () => (state) => {
         if (state && typeof document !== "undefined") {
           document.documentElement.setAttribute("data-theme", state.theme);

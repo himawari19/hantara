@@ -5,9 +5,10 @@ import { useCollectionStore, Collection, Folder, RequestItem } from "@/store/col
 import { useTabStore } from "@/store/tab-store";
 import { useRequestStore } from "@/store/request-store";
 import { AddRequestDialog } from "./add-request-dialog";
-import { ChevronRight, Folder as FolderIcon, FolderOpen, MoreVertical, Plus, Trash2, Copy, Download, Play, Pencil } from "lucide-react";
+import { ChevronRight, Folder as FolderIcon, FolderOpen, MoreVertical, Plus, Trash2, Copy, Download, Play, Pencil, Settings } from "lucide-react";
 import { CollectionRunner } from "./collection-runner";
 import { CollectionSettings } from "./collection-settings";
+import { FolderSettings } from "./folder-settings";
 
 interface CollectionTreeProps {
   searchQuery?: string;
@@ -141,7 +142,7 @@ function CollectionItem({
   };
 
   return (
-    <div className="group">
+    <div className="collection-item group">
       <div className="flex items-center">
         {isEditing ? (
           <div className="flex flex-1 items-center gap-1.5 px-2 py-1.5">
@@ -307,6 +308,7 @@ function FolderItem({
   const [editName, setEditName] = useState(folder.name);
   const [showMenu, setShowMenu] = useState(false);
   const [showAddRequest, setShowAddRequest] = useState(false);
+  const [showFolderSettings, setShowFolderSettings] = useState(false);
 
   const handleRename = () => {
     if (editName.trim()) {
@@ -381,6 +383,13 @@ function FolderItem({
                 >
                   Rename
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowFolderSettings(true); setShowMenu(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                >
+                  <Settings size={12} /> Settings
+                </button>
                 <div className="my-1 border-t border-[var(--border)]" />
                 <button
                   type="button"
@@ -425,6 +434,15 @@ function FolderItem({
           onClose={() => setShowAddRequest(false)}
         />
       )}
+
+      {showFolderSettings && (
+        <FolderSettings
+          collectionId={collectionId}
+          folderId={folder.id}
+          folderName={folder.name}
+          onClose={() => setShowFolderSettings(false)}
+        />
+      )}
     </div>
   );
 }
@@ -442,7 +460,7 @@ function RequestItemRow({
 }) {
   const { removeRequest, duplicateRequest, updateRequest } = useCollectionStore();
   const { openTab } = useTabStore();
-  const { setMethod, setUrl, setHeaders, setBody, setBodyType } = useRequestStore();
+  const { setMethod, setUrl, setHeaders, setBody, setBodyType, setPreScript, setTestScript } = useRequestStore();
   const [showMenu, setShowMenu] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(request.name);
@@ -461,6 +479,8 @@ function RequestItemRow({
     setHeaders(request.headers);
     setBody(request.body);
     setBodyType(request.bodyType);
+    setPreScript(request.preScript || "");
+    setTestScript(request.testScript || "");
   };
 
   const handleRename = () => {

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { idbStorage } from "@/lib/idb-storage";
 
 export interface MockRoute {
   id: string;
@@ -119,6 +120,6 @@ export const useMockStore = create<MockState>()(
         }));
       },
     }),
-    { name: "hantara-mock-servers" }
+    { name: "hantara-mock-servers", storage: idbStorage }
   )
 );

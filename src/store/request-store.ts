@@ -1,21 +1,11 @@
 import { create } from "zustand";
 import { useEnvironmentStore } from "./environment-store";
+import { useCollectionStore } from "./collection-store";
+import { useResponseStore } from "./response-store";
+import { executePreRequestScript, executeTestScriptAsync } from "@/lib/script-executor";
+import type { ResponseData, TestResult } from "./response-store";
 
-export interface ResponseData {
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  body: string;
-  time: number;
-  size: number;
-  cookies: { name: string; value: string; domain: string; path: string }[];
-}
-
-export interface TestResult {
-  name: string;
-  passed: boolean;
-  error?: string;
-}
+export type { ResponseData, TestResult } from "./response-store";
 
 export interface HistoryItem {
   id: string;
@@ -42,7 +32,7 @@ interface RequestState {
   scriptLogs: string[];
   testResults: TestResult[];
 
-  // Response
+  // Response — kept for backward compat, delegates to response-store
   response: ResponseData | null;
   isLoading: boolean;
   error: string | null;
@@ -75,6 +65,7 @@ interface RequestState {
 }
 
 let abortController: AbortController | null = null;
+let isSending = false; // Deduplication guard
 
 function generateId(): string {
   return crypto.randomUUID();
@@ -107,11 +98,23 @@ export const useRequestStore = create<RequestState>((set, get) => ({
   setDescription: (description) => set({ description }),
   setPreScript: (script) => set({ preScript: script }),
   setTestScript: (script) => set({ testScript: script }),
-  setResponse: (response) => set({ response }),
-  setLoading: (loading) => set({ isLoading: loading }),
-  setError: (error) => set({ error }),
+  setResponse: (response) => {
+    set({ response });
+    useResponseStore.getState().setResponse(response);
+  },
+  setLoading: (loading) => {
+    set({ isLoading: loading });
+    useResponseStore.getState().setLoading(loading);
+  },
+  setError: (error) => {
+    set({ error });
+    useResponseStore.getState().setError(error);
+  },
   clearHistory: () => set({ history: [] }),
-  clearScriptLogs: () => set({ scriptLogs: [], testResults: [] }),
+  clearScriptLogs: () => {
+    set({ scriptLogs: [], testResults: [] });
+    useResponseStore.getState().clearScriptLogs();
+  },
   addConsoleLogs: (log) =>
     set((state) => ({
       consoleLogs: [...state.consoleLogs, { ...log, timestamp: Date.now() }].slice(-500),
@@ -123,228 +126,222 @@ export const useRequestStore = create<RequestState>((set, get) => ({
       abortController.abort();
       abortController = null;
       set({ isLoading: false, error: "Request cancelled" });
+      useResponseStore.getState().setLoading(false);
+      useResponseStore.getState().setError("Request cancelled");
     }
   },
 
   sendRequest: async () => {
-    const { method, url, headers, body, bodyType, formData, preScript, testScript } = get();
-    const interpolate = useEnvironmentStore.getState().interpolate;
-
-    if (!url.trim()) {
-      set({ error: "URL is required" });
-      return;
-    }
-
-    let resolvedUrl = interpolate(url);
-    const resolvedBody = interpolate(body);
-
-    // Auto-prepend https:// if no protocol specified
-    if (resolvedUrl && !resolvedUrl.match(/^https?:\/\//i)) {
-      resolvedUrl = `https://${resolvedUrl}`;
-    }
-
-    set({ isLoading: true, error: null, response: null, scriptLogs: [], testResults: [] });
-
-    abortController = new AbortController();
-
-    // Execute pre-request script
-    if (preScript.trim()) {
-      try {
-        const logs: string[] = [];
-        const envStore = useEnvironmentStore.getState();
-        const fn = new Function("pm", "console", preScript);
-        fn(
-          {
-            variables: {
-              set: (key: string, value: string) => envStore.setVariable(key, value),
-              get: (key: string) => envStore.getVariable(key) || "",
-            },
-            globals: {
-              set: (key: string, value: string) => envStore.setGlobalVariable(key, value),
-              get: (key: string) => envStore.getGlobalVariable(key) || "",
-            },
-            environment: {
-              set: (key: string, value: string) => envStore.setVariable(key, value),
-              get: (key: string) => envStore.getVariable(key) || "",
-            },
-            request: { addHeader: () => {} },
-          },
-          { log: (msg: string) => logs.push(String(msg)) }
-        );
-        if (logs.length > 0) set({ scriptLogs: logs });
-      } catch (err: any) {
-        set((state) => ({ scriptLogs: [...state.scriptLogs, `[ERROR] Pre-request: ${err.message}`] }));
-      }
-    }
-
-    const startTime = performance.now();
+    // Deduplication: prevent double-send
+    if (isSending) return;
+    isSending = true;
 
     try {
-      const activeHeaders: Record<string, string> = {};
-      headers
-        .filter((h) => h.enabled && h.key.trim())
-        .forEach((h) => {
-          activeHeaders[interpolate(h.key)] = interpolate(h.value);
-        });
+      const { method, url, headers, body, bodyType, formData, preScript, testScript } = get();
+      const interpolate = useEnvironmentStore.getState().interpolate;
+      const { getInheritedAuth, getInheritedHeaders, activeRequestId } = useCollectionStore.getState();
 
-      let requestBody: string | undefined = undefined;
-      if (bodyType === "json" || bodyType === "raw" || bodyType === "graphql") {
-        requestBody = resolvedBody;
-      } else if (bodyType === "form-data") {
-        const formObj: Record<string, string> = {};
-        formData.filter((f) => f.enabled && f.key.trim()).forEach((f) => {
-          formObj[interpolate(f.key)] = interpolate(f.value);
-        });
-        requestBody = JSON.stringify(formObj);
-      } else if (bodyType === "x-www-form-urlencoded") {
-        const params = new URLSearchParams();
-        formData.filter((f) => f.enabled && f.key.trim()).forEach((f) => {
-          params.append(interpolate(f.key), interpolate(f.value));
-        });
-        requestBody = params.toString();
-        if (!activeHeaders["Content-Type"]) {
-          activeHeaders["Content-Type"] = "application/x-www-form-urlencoded";
-        }
+      if (!url.trim()) {
+        set({ error: "URL is required" });
+        return;
       }
 
-      const res = await fetch("/api/proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          method,
-          url: resolvedUrl,
-          headers: activeHeaders,
-          body: bodyType !== "none" ? requestBody : undefined,
-        }),
-        signal: abortController.signal,
-      });
+      let resolvedUrl = interpolate(url);
+      const resolvedBody = interpolate(body);
 
-      const data = await res.json();
-      const endTime = performance.now();
-      const responseTime = Math.round(endTime - startTime);
-
-      const cookies: ResponseData["cookies"] = [];
-      const setCookieHeader = data.headers?.["set-cookie"] || data.headers?.["Set-Cookie"];
-      if (setCookieHeader) {
-        const cookieStrs = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
-        cookieStrs.forEach((c: string) => {
-          const parts = c.split(";");
-          const [nameValue] = parts;
-          if (nameValue) {
-            const [name, ...valueParts] = nameValue.split("=");
-            cookies.push({ name: name?.trim() || "", value: valueParts.join("=").trim(), domain: "", path: "/" });
-          }
-        });
+      // Auto-prepend https:// if no protocol specified
+      if (resolvedUrl && !resolvedUrl.match(/^https?:\/\//i)) {
+        resolvedUrl = `https://${resolvedUrl}`;
       }
 
-      const responseData: ResponseData = {
-        status: data.status,
-        statusText: data.statusText,
-        headers: data.headers || {},
-        body: typeof data.body === "string" ? data.body : JSON.stringify(data.body, null, 2),
-        time: responseTime,
-        size: new Blob([typeof data.body === "string" ? data.body : JSON.stringify(data.body)]).size,
-        cookies,
-      };
+      set({ isLoading: true, error: null, response: null, scriptLogs: [], testResults: [] });
+      useResponseStore.getState().setLoading(true);
+      useResponseStore.getState().setError(null);
+      useResponseStore.getState().setResponse(null);
+      useResponseStore.getState().clearScriptLogs();
 
-      // Execute test script
-      let testResults: TestResult[] = [];
-      let testLogs: string[] = [];
-      if (testScript.trim()) {
+      abortController = new AbortController();
+
+      // Execute pre-request script via Web Worker
+      if (preScript.trim()) {
         try {
-          const result = executeTestScript(testScript, responseData);
-          testResults = result.results;
-          testLogs = result.logs;
+          const envStore = useEnvironmentStore.getState();
+          const variables: Record<string, string> = {};
+          const globals: Record<string, string> = {};
+          // Collect current variables
+          const activeEnv = envStore.environments.find(e => e.id === envStore.activeEnvironmentId);
+          if (activeEnv) {
+            activeEnv.variables.forEach((v: any) => { if (v.key) variables[v.key] = v.currentValue || v.initialValue || ""; });
+          }
+          envStore.globals.forEach((g: any) => { if (g.key) globals[g.key] = g.currentValue || g.initialValue || ""; });
+
+          const result = await executePreRequestScript(preScript, variables, globals);
+
+          if (result.logs.length > 0) set({ scriptLogs: result.logs });
+          // Apply variable updates back to store
+          result.variableUpdates.forEach(({ key, value }) => envStore.setVariable(key, value));
+          result.globalUpdates.forEach(({ key, value }) => envStore.setGlobalVariable(key, value));
         } catch (err: any) {
-          testLogs = [`[ERROR] Test script: ${err.message}`];
+          set((state) => ({ scriptLogs: [...state.scriptLogs, `[ERROR] Pre-request: ${err.message}`] }));
         }
       }
 
-      set((state) => ({
-        response: responseData,
-        isLoading: false,
-        testResults,
-        scriptLogs: [...state.scriptLogs, ...testLogs],
-        history: [
-          { id: generateId(), method, url: resolvedUrl, status: data.status, time: responseTime, timestamp: Date.now(), size: responseData.size },
-          ...state.history.slice(0, 99),
-        ],
-        consoleLogs: [
-          ...state.consoleLogs,
-          { type: "info" as const, message: `${method} ${resolvedUrl} → ${data.status} (${responseTime}ms)`, timestamp: Date.now() },
-        ],
-      }));
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        set({ error: "Request cancelled", isLoading: false });
-      } else {
-        set({
-          error: err.message || "Request failed",
-          isLoading: false,
-          consoleLogs: [...get().consoleLogs, { type: "error" as const, message: `Error: ${err.message}`, timestamp: Date.now() }],
+      const startTime = performance.now();
+
+      try {
+        // Build headers: inherited (collection/folder) + request-level
+        const activeHeaders: Record<string, string> = {};
+
+        if (activeRequestId) {
+          const inherited = getInheritedHeaders(activeRequestId);
+          inherited.forEach((h) => {
+            activeHeaders[interpolate(h.key)] = interpolate(h.value);
+          });
+        }
+
+        if (activeRequestId) {
+          const inheritedAuth = getInheritedAuth(activeRequestId);
+          if (inheritedAuth) {
+            if (inheritedAuth.type === "bearer" && inheritedAuth.config.token) {
+              activeHeaders["Authorization"] = `Bearer ${interpolate(inheritedAuth.config.token)}`;
+            } else if (inheritedAuth.type === "basic" && inheritedAuth.config.username) {
+              const encoded = btoa(`${interpolate(inheritedAuth.config.username)}:${interpolate(inheritedAuth.config.password || "")}`);
+              activeHeaders["Authorization"] = `Basic ${encoded}`;
+            } else if (inheritedAuth.type === "api-key" && inheritedAuth.config.keyName) {
+              activeHeaders[interpolate(inheritedAuth.config.keyName)] = interpolate(inheritedAuth.config.keyValue || "");
+            }
+          }
+        }
+
+        headers
+          .filter((h) => h.enabled && h.key.trim())
+          .forEach((h) => {
+            activeHeaders[interpolate(h.key)] = interpolate(h.value);
+          });
+
+        let requestBody: string | undefined = undefined;
+        if (bodyType === "json" || bodyType === "raw" || bodyType === "graphql") {
+          requestBody = resolvedBody;
+        } else if (bodyType === "form-data") {
+          const formObj: Record<string, string> = {};
+          formData.filter((f) => f.enabled && f.key.trim()).forEach((f) => {
+            formObj[interpolate(f.key)] = interpolate(f.value);
+          });
+          requestBody = JSON.stringify(formObj);
+        } else if (bodyType === "x-www-form-urlencoded") {
+          const params = new URLSearchParams();
+          formData.filter((f) => f.enabled && f.key.trim()).forEach((f) => {
+            params.append(interpolate(f.key), interpolate(f.value));
+          });
+          requestBody = params.toString();
+          if (!activeHeaders["Content-Type"]) {
+            activeHeaders["Content-Type"] = "application/x-www-form-urlencoded";
+          }
+        }
+
+        const res = await fetch("/api/proxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            method,
+            url: resolvedUrl,
+            headers: activeHeaders,
+            body: bodyType !== "none" ? requestBody : undefined,
+          }),
+          signal: abortController.signal,
         });
+
+        const data = await res.json();
+        const endTime = performance.now();
+        const responseTime = Math.round(endTime - startTime);
+
+        const cookies: ResponseData["cookies"] = [];
+        const setCookieHeader = data.headers?.["set-cookie"] || data.headers?.["Set-Cookie"];
+        if (setCookieHeader) {
+          const cookieStrs = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+          cookieStrs.forEach((c: string) => {
+            const parts = c.split(";");
+            const [nameValue] = parts;
+            if (nameValue) {
+              const [name, ...valueParts] = nameValue.split("=");
+              cookies.push({ name: name?.trim() || "", value: valueParts.join("=").trim(), domain: "", path: "/" });
+            }
+          });
+        }
+
+        const responseData: ResponseData = {
+          status: data.status,
+          statusText: data.statusText,
+          headers: data.headers || {},
+          body: typeof data.body === "string" ? data.body : JSON.stringify(data.body, null, 2),
+          time: responseTime,
+          size: new Blob([typeof data.body === "string" ? data.body : JSON.stringify(data.body)]).size,
+          cookies,
+        };
+
+        // Execute test script via Web Worker
+        let testResults: TestResult[] = [];
+        let testLogs: string[] = [];
+        if (testScript.trim()) {
+          try {
+            const envStore = useEnvironmentStore.getState();
+            const variables: Record<string, string> = {};
+            const globals: Record<string, string> = {};
+            const activeEnv = envStore.environments.find(e => e.id === envStore.activeEnvironmentId);
+            if (activeEnv) {
+              activeEnv.variables.forEach((v: any) => { if (v.key) variables[v.key] = v.currentValue || v.initialValue || ""; });
+            }
+            envStore.globals.forEach((g: any) => { if (g.key) globals[g.key] = g.currentValue || g.initialValue || ""; });
+
+            const result = await executeTestScriptAsync(testScript, responseData, variables, globals);
+            testResults = result.testResults;
+            testLogs = result.logs;
+            result.variableUpdates.forEach(({ key, value }) => envStore.setVariable(key, value));
+            result.globalUpdates.forEach(({ key, value }) => envStore.setGlobalVariable(key, value));
+          } catch (err: any) {
+            testLogs = [`[ERROR] Test script: ${err.message}`];
+          }
+        }
+
+        set((state) => ({
+          response: responseData,
+          isLoading: false,
+          testResults,
+          scriptLogs: [...state.scriptLogs, ...testLogs],
+          history: [
+            { id: generateId(), method, url: resolvedUrl, status: data.status, time: responseTime, timestamp: Date.now(), size: responseData.size },
+            ...state.history.slice(0, 99),
+          ],
+          consoleLogs: [
+            ...state.consoleLogs,
+            { type: "info" as const, message: `${method} ${resolvedUrl} → ${data.status} (${responseTime}ms)`, timestamp: Date.now() },
+          ],
+        }));
+
+        // Sync to response-store
+        useResponseStore.getState().setResponse(responseData);
+        useResponseStore.getState().setLoading(false);
+        useResponseStore.getState().setTestResults(testResults);
+        useResponseStore.getState().appendScriptLogs(testLogs);
+      } catch (err: any) {
+        if (err.name === "AbortError") {
+          set({ error: "Request cancelled", isLoading: false });
+          useResponseStore.getState().setError("Request cancelled");
+          useResponseStore.getState().setLoading(false);
+        } else {
+          set({
+            error: err.message || "Request failed",
+            isLoading: false,
+            consoleLogs: [...get().consoleLogs, { type: "error" as const, message: `Error: ${err.message}`, timestamp: Date.now() }],
+          });
+          useResponseStore.getState().setError(err.message || "Request failed");
+          useResponseStore.getState().setLoading(false);
+        }
+      } finally {
+        abortController = null;
       }
     } finally {
-      abortController = null;
+      isSending = false;
     }
   },
 }));
-
-function executeTestScript(script: string, response: ResponseData): { results: TestResult[]; logs: string[] } {
-  const results: TestResult[] = [];
-  const logs: string[] = [];
-
-  const pm = {
-    response: {
-      status: response.status,
-      time: response.time,
-      headers: response.headers,
-      json: () => { try { return JSON.parse(response.body); } catch { return null; } },
-      text: () => response.body,
-    },
-    test: (name: string, fn: () => void) => {
-      try { fn(); results.push({ name, passed: true }); }
-      catch (err: any) { results.push({ name, passed: false, error: err.message }); }
-    },
-    expect: (value: any) => ({
-      to: {
-        equal: (expected: any) => { if (value !== expected) throw new Error(`Expected ${expected}, got ${value}`); },
-        exist: undefined as any,
-        be: {
-          below: (max: number) => { if (value >= max) throw new Error(`Expected ${value} to be below ${max}`); },
-          above: (min: number) => { if (value <= min) throw new Error(`Expected ${value} to be above ${min}`); },
-        },
-        include: (item: any) => {
-          if (typeof value === "string" && !value.includes(item)) throw new Error(`Expected to include "${item}"`);
-          if (Array.isArray(value) && !value.includes(item)) throw new Error(`Expected array to include ${item}`);
-        },
-        have: {
-          property: (prop: string) => {
-            if (typeof value !== "object" || !(prop in value)) throw new Error(`Expected to have property "${prop}"`);
-          },
-        },
-      },
-    }),
-    variables: {
-      set: (key: string, value: string) => useEnvironmentStore.getState().setVariable(key, value),
-      get: (key: string) => useEnvironmentStore.getState().getVariable(key) || "",
-    },
-    globals: {
-      set: (key: string, value: string) => useEnvironmentStore.getState().setGlobalVariable(key, value),
-      get: (key: string) => useEnvironmentStore.getState().getGlobalVariable(key) || "",
-    },
-    environment: {
-      set: (key: string, value: string) => useEnvironmentStore.getState().setVariable(key, value),
-      get: (key: string) => useEnvironmentStore.getState().getVariable(key) || "",
-    },
-  };
-
-  try {
-    const fn = new Function("pm", "console", script);
-    fn(pm, { log: (msg: string) => logs.push(String(msg)) });
-  } catch (err: any) {
-    logs.push(`[ERROR] ${err.message}`);
-  }
-
-  return { results, logs };
-}

@@ -46,6 +46,18 @@ body {
   background: var(--text-secondary);
 }
 
+/* Collection tree virtualization — skip rendering off-screen items */
+.collection-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
+}
+
+/* Shimmer animation for skeleton */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
 /* Monaco editor overrides for light theme */
 .monaco-editor .margin,
 .monaco-editor .monaco-editor-background {
