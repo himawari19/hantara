@@ -94,7 +94,7 @@ export function ResizablePanel({
           isVertical
             ? "h-1 cursor-row-resize hover:bg-[var(--accent)]/30"
             : "w-1 cursor-col-resize hover:bg-[var(--accent)]/30"
-        } ${isDragging ? "bg-[var(--accent)]/50" : "bg-[var(--border)]"} transition-colors`}
+        } ${isDragging ? "bg-[var(--accent)]/50" : "bg-[var(--border)]"} transition-colors ${isVertical ? "lg:flex" : "hidden lg:flex"}`}
         onMouseDown={handleMouseDown}
       >
         {/* Drag indicator */}

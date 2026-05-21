@@ -25,6 +25,15 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
   margin: 0;
   padding: 0;
+  overflow-x: hidden;
+}
+
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
 }
 
 /* Scrollbar styling */
@@ -63,3 +72,4 @@ body {
 .monaco-editor .monaco-editor-background {
   background-color: var(--bg-tertiary) !important;
 }
+

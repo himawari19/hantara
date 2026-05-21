@@ -24,12 +24,10 @@ export function Sidebar({ collapsed, onToggle, mainView, onViewChange, onShowCoo
 
   return (
     <aside
-      className={`flex flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] transition-all duration-200 ${
-        collapsed ? "w-12" : "w-72"
-      }`}
+      className={`flex w-full flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] transition-all duration-200 lg:w-72 ${collapsed ? "lg:w-12" : ""}`}
     >
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-3">
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-3 sm:px-4">
         {!collapsed && (
           <h1 className="text-lg font-bold text-[var(--accent)]">Hantara</h1>
         )}
@@ -89,7 +87,7 @@ export function Sidebar({ collapsed, onToggle, mainView, onViewChange, onShowCoo
 
       {/* Navigation */}
       {!collapsed && (
-        <div className="flex border-b border-[var(--border)]">
+        <div className="flex flex-wrap border-b border-[var(--border)]">
           <NavButton icon={Send} label="API" active={mainView === "request"} onClick={() => onViewChange("request")} />
           <NavButton icon={Server} label="Mock" active={mainView === "mock-server"} onClick={() => onViewChange("mock-server")} />
           <NavButton icon={Zap} label="Load" active={mainView === "load-test"} onClick={() => onViewChange("load-test")} />
@@ -99,7 +97,7 @@ export function Sidebar({ collapsed, onToggle, mainView, onViewChange, onShowCoo
 
       {/* Collapsed nav icons */}
       {collapsed && (
-        <div className="flex flex-col items-center gap-1 border-b border-[var(--border)] py-2">
+        <div className="flex flex-wrap items-center gap-1 border-b border-[var(--border)] p-2">
           <button
             type="button"
             onClick={() => onViewChange("request")}
@@ -195,3 +193,4 @@ function NavButton({ icon: Icon, label, active, onClick }: { icon: any; label: s
     </button>
   );
 }
+

@@ -54,7 +54,7 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg-primary)] px-4 py-2">
+      <div className="flex flex-col gap-2 border-b border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4">
         {/* Left: Breadcrumb */}
         <div className="flex items-center gap-1.5 text-sm">
           <span className="text-[var(--text-secondary)]">{activeTab.collectionName}</span>
@@ -65,9 +65,9 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
         </div>
 
         {/* Right: Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Sync Status Indicator */}
-          <div className="flex items-center gap-1 text-[10px]" title={
+          <div className="hidden items-center gap-1 text-[10px] sm:flex" title={
             syncStatus === "syncing" ? "Saving changes... (Ctrl+S to force)" :
             syncStatus === "synced" ? "All changes saved" :
             syncStatus === "error" ? "Failed to save — will retry" : "Ready"
@@ -104,7 +104,7 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
               <button
                 type="button"
                 onClick={handleQuickRevert}
-                className="flex items-center gap-1 rounded-l px-2 py-1 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] border-r border-[var(--border)]"
+                className="flex items-center gap-1 rounded-l px-2 py-1.5 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] border-r border-[var(--border)] sm:px-2.5"
                 title="Revert to last saved state"
                 aria-label="Revert changes"
               >
@@ -114,7 +114,7 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
               <button
                 type="button"
                 onClick={() => setShowRevertDialog(true)}
-                className="rounded-r px-1.5 py-1 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+                className="rounded-r px-2 py-1.5 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
                 title="View changes before reverting"
                 aria-label="View diff"
               >
@@ -127,7 +127,7 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
           <button
             type="button"
             onClick={() => setShowSaveAsDialog(true)}
-            className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            className="rounded p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
             title="Save as new request (Ctrl+Shift+S)"
             aria-label="Save as new request"
           >
@@ -141,7 +141,7 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
           <button
             type="button"
             onClick={onShowCodeGen}
-            className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            className="rounded p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
             title="Generate Code (Ctrl+Shift+C)"
             aria-label="Generate code snippet"
           >
@@ -152,7 +152,7 @@ export function RequestHeader({ onShowCodeGen, onShowSearch }: RequestHeaderProp
           <button
             type="button"
             onClick={toggleShortcuts}
-            className="rounded p-1.5 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
+            className="rounded p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
             title="Keyboard Shortcuts (Ctrl+/)"
             aria-label="Keyboard shortcuts"
           >

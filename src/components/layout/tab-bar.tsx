@@ -24,7 +24,7 @@ export function TabBar() {
 
   if (tabs.length === 0) {
     return (
-      <div className="flex h-9 items-center border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3">
+      <div className="flex h-10 items-center border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 sm:h-9 sm:px-4">
         <span className="text-xs text-[var(--text-secondary)]">No open tabs</span>
       </div>
     );
@@ -44,7 +44,7 @@ export function TabBar() {
   return (
     <>
       <div className="flex items-center border-b border-[var(--border)] bg-[var(--bg-secondary)]">
-        <div className="flex flex-1 items-center overflow-x-auto">
+        <div className="flex flex-1 items-center overflow-x-auto overscroll-x-contain">
           {tabs.map((tab) => (
             <TabItem
               key={tab.id}
@@ -59,7 +59,7 @@ export function TabBar() {
           {/* New Tab Button */}
           <button
             type="button"
-            className="flex h-9 items-center px-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            className="flex h-10 items-center px-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] sm:h-9 sm:px-3"
             aria-label="New tab"
             title="New tab"
           >
@@ -73,7 +73,7 @@ export function TabBar() {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
           <div
-            className="fixed z-50 w-44 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg"
+            className="fixed z-50 w-40 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] py-1 shadow-lg sm:w-44"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <button

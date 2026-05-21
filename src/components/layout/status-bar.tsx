@@ -158,7 +158,7 @@ export function StatusBar({ onToggleConsole, showConsole, onShowSyncHealth }: St
         </button>
 
         {/* Shortcuts hint */}
-        <span className="text-[var(--text-secondary)]">
+        <span className="hidden text-[var(--text-secondary)] xl:inline">
           <Keyboard size={10} className="inline" /> Ctrl+/ for shortcuts
         </span>
       </div>

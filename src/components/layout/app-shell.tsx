@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, lazy, Suspense } from "react";
+import { Menu, X } from "lucide-react";
 import { Sidebar } from "./sidebar";
 import { TabBar } from "./tab-bar";
 import { RequestHeader } from "./request-header";
@@ -44,6 +45,8 @@ export function AppShell() {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showSyncHealth, setShowSyncHealth] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mainView, setMainView] = useState<MainView>("request");
   const { showPanel: showShortcuts, togglePanel: toggleShortcuts } = useShortcutsStore();
   const { sendRequest, method, url, headers, body, bodyType } = useRequestStore();
@@ -55,6 +58,17 @@ export function AppShell() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const updateMobile = () => setIsMobile(window.innerWidth < 1024);
+    updateMobile();
+    window.addEventListener("resize", updateMobile);
+    return () => window.removeEventListener("resize", updateMobile);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) setMobileSidebarOpen(false);
+  }, [isMobile]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -84,16 +98,56 @@ export function AppShell() {
       {/* Offline / Reconnecting Banner */}
       <OfflineBanner />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
         {/* Sidebar */}
-        <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
-          mainView={mainView}
-          onViewChange={setMainView}
-          onShowCookies={() => setShowCookies(true)}
-          onShowDocs={() => setShowDocs(true)}
-        />
+        {isMobile ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setMobileSidebarOpen(true)}
+              className="fixed left-3 top-3 z-40 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2 shadow-md lg:hidden"
+              aria-label="Open sidebar"
+            >
+              <Menu size={18} />
+            </button>
+            {mobileSidebarOpen && (
+              <div className="fixed inset-0 z-40 lg:hidden">
+                <button
+                  type="button"
+                  className="absolute inset-0 bg-black/40"
+                  onClick={() => setMobileSidebarOpen(false)}
+                  aria-label="Close sidebar overlay"
+                />
+                <div className="absolute left-0 top-0 flex h-full w-[85vw] max-w-sm flex-col shadow-2xl">
+                  <div className="flex items-center justify-end border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2">
+                    <button type="button" onClick={() => setMobileSidebarOpen(false)} className="rounded p-2" aria-label="Close sidebar">
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <Sidebar
+                      collapsed={false}
+                      onToggle={() => setSidebarCollapsed((prev) => !prev)}
+                      mainView={mainView}
+                      onViewChange={(view) => { setMainView(view); setMobileSidebarOpen(false); }}
+                      onShowCookies={() => setShowCookies(true)}
+                      onShowDocs={() => setShowDocs(true)}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <Sidebar
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+            mainView={mainView}
+            onViewChange={setMainView}
+            onShowCookies={() => setShowCookies(true)}
+            onShowDocs={() => setShowDocs(true)}
+          />
+        )}
 
         {/* Main Content */}
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -131,9 +185,9 @@ export function AppShell() {
 
                   {/* Resizable Request + Response split */}
                   <ResizablePanel
-                    direction="vertical"
+                    direction={isMobile ? "horizontal" : "vertical"}
                     defaultRatio={0.45}
-                    minSize={150}
+                    minSize={isMobile ? 220 : 150}
                     className="flex-1 overflow-hidden"
                     first={<RequestPanel />}
                     second={<ResponsePanel />}
@@ -145,7 +199,7 @@ export function AppShell() {
 
           {mainView === "mock-server" && (
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex items-center border-b border-[var(--border)] px-4 py-2">
+              <div className="flex items-center border-b border-[var(--border)] px-3 py-2 sm:px-4">
                 <h2 className="text-sm font-bold text-[var(--text-primary)]">Mock Servers</h2>
               </div>
               <div className="flex-1 overflow-hidden">
@@ -158,7 +212,7 @@ export function AppShell() {
 
           {mainView === "load-test" && (
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex items-center border-b border-[var(--border)] px-4 py-2">
+              <div className="flex items-center border-b border-[var(--border)] px-3 py-2 sm:px-4">
                 <h2 className="text-sm font-bold text-[var(--text-primary)]">Load Testing</h2>
               </div>
               <div className="flex-1 overflow-hidden">
@@ -171,7 +225,7 @@ export function AppShell() {
 
           {mainView === "monitor" && (
             <div className="flex flex-1 flex-col overflow-hidden">
-              <div className="flex items-center border-b border-[var(--border)] px-4 py-2">
+              <div className="flex items-center border-b border-[var(--border)] px-3 py-2 sm:px-4">
                 <h2 className="text-sm font-bold text-[var(--text-primary)]">API Monitoring</h2>
               </div>
               <div className="flex-1 overflow-hidden">
