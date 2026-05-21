@@ -150,6 +150,8 @@ function ServerHeader({ server }: { server: MockServer }) {
         value={server.name}
         onChange={(e) => updateServer(server.id, { name: e.target.value })}
         className="rounded bg-[var(--bg-tertiary)] px-2 py-1 text-sm font-medium text-[var(--text-primary)] outline-none"
+        title="Server name"
+        placeholder="Server name"
       />
       <div className="flex items-center gap-1 rounded bg-[var(--bg-tertiary)] px-2 py-1">
         <span className="font-mono text-[10px] text-[var(--text-secondary)]">{baseUrl}</span>

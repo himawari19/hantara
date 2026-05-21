@@ -97,6 +97,8 @@ export function FlowRunner({ onClose }: { onClose: () => void }) {
                   value={selectedFlow.name}
                   onChange={(e) => updateFlow(selectedFlow.id, { name: e.target.value })}
                   className="rounded bg-[var(--bg-tertiary)] px-2 py-0.5 text-xs text-[var(--text-primary)] outline-none"
+                  title="Flow name"
+                  placeholder="Flow name"
                 />
               )}
             </div>
@@ -136,13 +138,16 @@ export function FlowRunner({ onClose }: { onClose: () => void }) {
             <div className="flex-1 overflow-auto p-4">
               {/* Delay Setting */}
               <div className="mb-4 flex items-center gap-2">
-                <label className="text-xs text-[var(--text-secondary)]">Delay between requests:</label>
+                <span id="delay-label" className="text-xs text-[var(--text-secondary)]">Delay between requests:</span>
                 <input
                   type="number"
                   value={selectedFlow.delayBetweenRequests}
                   onChange={(e) => updateFlow(selectedFlow.id, { delayBetweenRequests: parseInt(e.target.value) || 0 })}
                   className="w-20 rounded bg-[var(--bg-tertiary)] px-2 py-1 text-xs text-[var(--text-primary)] outline-none"
                   min={0}
+                  title="Delay between requests (ms)"
+                  placeholder="0"
+                  aria-labelledby="delay-label"
                 />
                 <span className="text-xs text-[var(--text-secondary)]">ms</span>
               </div>
